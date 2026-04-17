@@ -1,0 +1,1 @@
+- Cuando se listen las ofertas aplicadas si hay alguna que su ratio sea menor que la media del ratio la compra venta para esa moneda debe señalarse con algun emoji para que se alerte al usuario

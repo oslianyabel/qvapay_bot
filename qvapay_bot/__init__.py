@@ -1,0 +1,1 @@
+"""QvaPay Telegram bot package."""
