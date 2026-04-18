@@ -13,13 +13,12 @@ def test_format_monitor_status_includes_rules_and_errors() -> None:
     state = P2PMonitorChatState(enabled=True, poll_interval_seconds=30)
     state.rules.coin = "BANK_CUP"
     state.last_error = "sample error"
-    state.last_error_at = "2026-04-02T10:00:00Z"
 
     formatted = format_monitor_status(state)
 
-    assert "enabled: yes" in formatted
-    assert "coin: BANK_CUP" in formatted
-    assert "last_error: sample error" in formatted
+    assert "activo: ✅" in formatted
+    assert "moneda: BANK_CUP" in formatted
+    assert "ultimo_error: sample error" in formatted
 
 
 # uv run pytest -s tests/test_p2p_formatter.py
@@ -55,7 +54,7 @@ def test_format_applied_history_groups_applied_and_lost_race_entries() -> None:
 
     formatted = format_applied_history([applied_entry], [lost_entry])
 
-    assert "applied:" in formatted
-    assert "lost_race:" in formatted
+    assert "aplicadas:" in formatted
+    assert "perdidas_por_carrera:" in formatted
     assert "offer-1" in formatted
     assert "offer-2" in formatted

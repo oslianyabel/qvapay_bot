@@ -227,8 +227,18 @@ async def monitor_status_command(
         return
     chat_id = update.effective_chat.id
     p2p_repository = context.bot_data["p2p_repository"]
+    state_store = context.bot_data["state_store"]
+    qvapay_client = context.bot_data["qvapay_client"]
     monitor_state = p2p_repository.get_chat_state(chat_id)
-    await reply_text(update, format_monitor_status(monitor_state))
+    auth_state = state_store.get_chat_state(chat_id)
+    balance: float | None = None
+    if auth_state.has_bearer:
+        response = await qvapay_client.execute(COMMAND_INDEX["profile"], {}, auth_state)
+        if response.status_code == 200 and isinstance(response.body, dict):
+            raw = response.body.get("balance")
+            if isinstance(raw, (int, float)):
+                balance = float(raw)
+    await reply_text(update, format_monitor_status(monitor_state, balance))
 
 
 async def rules_show_command(

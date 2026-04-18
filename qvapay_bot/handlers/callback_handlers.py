@@ -163,10 +163,18 @@ async def monitor_on_confirm_callback(
         state_store = context.bot_data["state_store"]
         p2p_repository = context.bot_data["p2p_repository"]
         p2p_monitor_manager = context.bot_data["p2p_monitor_manager"]
+        qvapay_client = context.bot_data["qvapay_client"]
         auth_state = state_store.get_chat_state(chat_id)
         monitor_state = p2p_repository.get_chat_state(chat_id)
         monitor_state.enabled = True
         monitor_state.poll_interval_seconds = poll_interval
         p2p_repository.save_chat_state(chat_id, monitor_state)
         await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
-        await reply_text(update, format_monitor_status(monitor_state))
+        balance: float | None = None
+        if auth_state.has_bearer:
+            resp = await qvapay_client.execute(COMMAND_INDEX["profile"], {}, auth_state)
+            if resp.status_code == 200 and isinstance(resp.body, dict):
+                raw = resp.body.get("balance")
+                if isinstance(raw, (int, float)):
+                    balance = float(raw)
+        await reply_text(update, format_monitor_status(monitor_state, balance))

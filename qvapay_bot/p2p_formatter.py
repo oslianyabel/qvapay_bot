@@ -19,22 +19,36 @@ APPLIED_LIST_PAGE_SIZE = 10
 _APPLIED_LIST_PAGE_CALLBACK_PREFIX = "adlp:"
 
 
-def format_monitor_status(state: P2PMonitorChatState) -> str:
-    offer_type_label = _format_offer_type_label(state.target_type, state.rules.coin)
+def format_monitor_status(
+    state: P2PMonitorChatState, balance: float | None = None
+) -> str:
+    rules = state.rules
+    offer_type_label = _format_offer_type_label(state.target_type, rules.coin)
+    active_emoji = "✅" if state.enabled else "❌"
     lines = [
         "Estado del monitor P2P",
-        f"activo: {'sí' if state.enabled else 'no'}",
-        f"intervalo_segundos: {state.poll_interval_seconds}",
+        f"activo: {active_emoji}",
+        f"moneda: {rules.coin or 'cualquiera'}",
         f"tipo_oferta: {offer_type_label}",
-        "",
-        format_rules(state),
     ]
-    if state.last_success_at:
-        lines.append(f"ultimo_exito: {state.last_success_at}")
+    if state.enabled:
+        applied_count = sum(
+            1 for e in state.filtered_history if e.result == OfferProcessResult.APPLIED
+        )
+        lines.append(f"ofertas_aplicadas: {applied_count}")
+    lines += [
+        f"ratio_min: {_format_optional_number(rules.min_ratio)}",
+        f"ratio_max: {_format_optional_number(rules.max_ratio)}",
+        f"monto_min: {_format_optional_number(rules.min_amount)}",
+        f"monto_max: {_format_optional_number(rules.max_amount)}",
+        f"solo_kyc: {'sí' if rules.only_kyc else 'no'}",
+        f"solo_vip: {'sí' if rules.only_vip else 'no'}",
+        f"intervalo_segundos: {state.poll_interval_seconds}",
+    ]
+    balance_str = f"${balance:.2f}" if isinstance(balance, float) else "$-"
+    lines.append(f"saldo_disponible: {balance_str}")
     if state.last_error:
         lines.append(f"ultimo_error: {state.last_error}")
-    if state.last_error_at:
-        lines.append(f"ultimo_error_en: {state.last_error_at}")
     return "\n".join(lines)
 
 
