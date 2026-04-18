@@ -212,11 +212,12 @@ class P2PMonitorManager:
                     )
                     chat_state.enabled = False
                     self._repository.save_chat_state(chat_id, chat_state)
-                    await self._send_text(
-                        bot,
-                        chat_id,
-                        f"⚠️ Saldo insuficiente ({balance:.2f} QUSD). Monitoreo detenido.",
-                    )
+                    if bot is not None:
+                        await self._send_text(
+                            bot,
+                            chat_id,
+                            f"⚠️ Saldo insuficiente ({balance:.2f} QUSD). Monitoreo detenido.",
+                        )
                     report.error_message = "Balance too low."
                     return report
                 sorted_candidates = [

@@ -79,9 +79,8 @@ class P2PMonitorStateStore:
 
 
 def _chat_state_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
-    rules_raw = (
-        raw_state.get("rules") if isinstance(raw_state.get("rules"), dict) else {}
-    )
+    raw_rules = raw_state.get("rules")
+    rules_raw: dict[str, Any] = raw_rules if isinstance(raw_rules, dict) else {}
     target_type_raw = str(raw_state.get("target_type", P2POfferType.ANY.value))
     try:
         target_type = P2POfferType(target_type_raw)

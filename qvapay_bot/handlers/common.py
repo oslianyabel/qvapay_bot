@@ -22,7 +22,7 @@ P2P_RULE_NAME_CALLBACK_PREFIX = "prn:"
 P2P_RULE_COIN_CALLBACK_PREFIX = "prc:"
 P2P_OFFER_TYPE_CALLBACK_PREFIX = "pot:"
 
-P2P_RULE_COIN_OPTIONS: tuple[str, ...] = ("ETECSA", "BANK_CUP", "ZELLE")
+P2P_RULE_COIN_OPTIONS: tuple[str, ...] = ("ETECSA", "BANK_CUP", "ZELLE", "BOLSATM")
 P2P_RULE_NAME_OPTIONS: tuple[tuple[str, str], ...] = (
     ("coin", "Moneda"),
     ("ratio", "Ratio"),
