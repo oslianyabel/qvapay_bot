@@ -7,7 +7,6 @@ from typing import Self
 
 DEFAULT_BASE_URL = "https://api.qvapay.com"
 DEFAULT_HTTP_TIMEOUT = 30.0
-DEFAULT_POLL_TIMEOUT = 25
 DEFAULT_STATE_FILE = Path("data/bot_state.json")
 DEFAULT_P2P_STATE_FILE = Path("data/p2p_monitor_state.json")
 DEFAULT_ALLOWED_CHAT_IDS: frozenset[int] = frozenset({6595595136, 1138837437})
@@ -33,10 +32,7 @@ class Settings:
     telegram_bot_token: str
     telegram_dev_chat_id: int | None
     qvapay_base_url: str
-    telegram_api_base_url: str
-    telegram_file_base_url: str
     http_timeout_seconds: float
-    telegram_poll_timeout_seconds: int
     state_file: Path
     p2p_state_file: Path
     allowed_chat_ids: frozenset[int]
@@ -60,12 +56,6 @@ class Settings:
         http_timeout_seconds = float(
             os.getenv("HTTP_TIMEOUT_SECONDS", str(DEFAULT_HTTP_TIMEOUT))
         )
-        telegram_poll_timeout_seconds = int(
-            os.getenv(
-                "TELEGRAM_POLL_TIMEOUT_SECONDS",
-                str(DEFAULT_POLL_TIMEOUT),
-            )
-        )
         state_file = Path(os.getenv("BOT_STATE_FILE", str(DEFAULT_STATE_FILE)))
         p2p_state_file = Path(
             os.getenv("BOT_P2P_STATE_FILE", str(DEFAULT_P2P_STATE_FILE))
@@ -81,11 +71,6 @@ class Settings:
         else:
             allowed_chat_ids = DEFAULT_ALLOWED_CHAT_IDS
 
-        telegram_api_base_url = f"https://api.telegram.org/bot{telegram_bot_token}"
-        telegram_file_base_url = (
-            f"https://api.telegram.org/file/bot{telegram_bot_token}"
-        )
-
         qvapay_email = os.getenv("EMAIL", "").strip()
         qvapay_password = os.getenv("PASSWORD", "").strip()
 
@@ -93,10 +78,7 @@ class Settings:
             telegram_bot_token=telegram_bot_token,
             telegram_dev_chat_id=telegram_dev_chat_id,
             qvapay_base_url=qvapay_base_url,
-            telegram_api_base_url=telegram_api_base_url,
-            telegram_file_base_url=telegram_file_base_url,
             http_timeout_seconds=http_timeout_seconds,
-            telegram_poll_timeout_seconds=telegram_poll_timeout_seconds,
             state_file=state_file,
             p2p_state_file=p2p_state_file,
             allowed_chat_ids=allowed_chat_ids,

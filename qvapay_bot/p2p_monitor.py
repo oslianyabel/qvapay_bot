@@ -4,8 +4,7 @@ import asyncio
 import logging
 import random
 from collections import deque
-from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from qvapay_bot.config import Settings
 from qvapay_bot.p2p_filters import (
@@ -32,12 +31,15 @@ from qvapay_bot.p2p_repository import P2PMonitorStateStore
 from qvapay_bot.qvapay_client import COMMAND_INDEX, QvaPayClient
 from qvapay_bot.state import BotStateStore, ChatAuthState
 
-SendText = Callable[[int, str], Awaitable[None]]
-SendMessageWithKeyboard = Callable[
-    [int, str, list[list[dict[str, str]]]], Awaitable[None]
-]
+if TYPE_CHECKING:
+    from telegram import Bot
+    from telegram.ext import JobQueue
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _job_name(chat_id: int) -> str:
+    return f"p2p_monitor_{chat_id}"
 
 
 class P2PMonitorManager:
@@ -48,56 +50,57 @@ class P2PMonitorManager:
         state_store: BotStateStore,
         repository: P2PMonitorStateStore,
         qvapay_client: QvaPayClient,
-        send_text: SendText,
-        send_message_with_keyboard: SendMessageWithKeyboard,
     ) -> None:
         self._settings = settings
         self._state_store = state_store
         self._repository = repository
         self._qvapay_client = qvapay_client
-        self._send_text = send_text
-        self._send_message_with_keyboard = send_message_with_keyboard
-        self._tasks: dict[int, asyncio.Task[None]] = {}
         self._recent_apply_attempts: deque[float] = deque()
         self._apply_lock = asyncio.Lock()
 
-    async def restore_tasks(self) -> None:
+    async def restore_jobs(self, job_queue: JobQueue | None) -> None:  # type: ignore[type-arg]
+        if job_queue is None:
+            return
         restored = 0
         for chat_id, auth_state in self._state_store.iter_chat_states():
             chat_state = self._repository.get_chat_state(chat_id)
             if chat_state.enabled and auth_state.has_bearer:
-                self._start_task(chat_id)
+                self._schedule_job(chat_id, chat_state.poll_interval_seconds, job_queue)
                 restored += 1
-        LOGGER.info("P2P monitor tasks restored count=%s", restored)
+        LOGGER.info("P2P monitor jobs restored count=%s", restored)
 
-    async def restart_chat(self, chat_id: int, auth_state: ChatAuthState) -> None:
-        await self.stop_chat(chat_id)
+    async def restart_chat(
+        self,
+        chat_id: int,
+        auth_state: ChatAuthState,
+        job_queue: JobQueue | None,  # type: ignore[type-arg]
+    ) -> None:
+        await self.stop_chat(chat_id, job_queue)
         chat_state = self._repository.get_chat_state(chat_id)
-        if chat_state.enabled and auth_state.has_bearer:
+        if chat_state.enabled and auth_state.has_bearer and job_queue is not None:
             LOGGER.info(
-                "Starting P2P monitor worker chat_id=%s interval_seconds=%s",
+                "Starting P2P monitor job chat_id=%s interval_seconds=%s",
                 chat_id,
                 chat_state.poll_interval_seconds,
             )
-            self._start_task(chat_id)
+            self._schedule_job(chat_id, chat_state.poll_interval_seconds, job_queue)
         else:
             LOGGER.info(
-                "P2P monitor worker not started chat_id=%s enabled=%s has_bearer=%s",
+                "P2P monitor job not started chat_id=%s enabled=%s has_bearer=%s",
                 chat_id,
                 chat_state.enabled,
                 auth_state.has_bearer,
             )
 
-    async def stop_chat(self, chat_id: int) -> None:
-        task = self._tasks.pop(chat_id, None)
-        if task is None:
+    async def stop_chat(self, chat_id: int, job_queue: JobQueue | None) -> None:  # type: ignore[type-arg]
+        if job_queue is None:
             return
-        LOGGER.info("Stopping P2P monitor worker chat_id=%s", chat_id)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        name = _job_name(chat_id)
+        jobs = job_queue.get_jobs_by_name(name)
+        for job in jobs:
+            job.schedule_removal()
+        if jobs:
+            LOGGER.info("Stopped P2P monitor job chat_id=%s", chat_id)
 
     async def run_cycle_once(
         self,
@@ -106,6 +109,7 @@ class P2PMonitorManager:
         *,
         force: bool,
         notify: bool,
+        bot: Bot | None = None,
     ) -> P2PMonitorCycleReport:
         report = P2PMonitorCycleReport()
         chat_state = self._repository.get_chat_state(chat_id)
@@ -209,6 +213,7 @@ class P2PMonitorManager:
                     chat_state.enabled = False
                     self._repository.save_chat_state(chat_id, chat_state)
                     await self._send_text(
+                        bot,
                         chat_id,
                         f"⚠️ Saldo insuficiente ({balance:.2f} QUSD). Monitoreo detenido.",
                     )
@@ -266,14 +271,14 @@ class P2PMonitorManager:
         chat_state.last_success_at = evaluated_at
         self._repository.save_chat_state(chat_id, chat_state)
 
-        if notify:
+        if notify and bot is not None:
             text, keyboard = format_offer_notification(
                 selected_offer,
                 evaluated_at=evaluated_at,
                 result_text=f"{final_entry.result.value}: {final_entry.reason or '-'}",
                 result=final_entry.result,
             )
-            await self._send_message_with_keyboard(chat_id, text, keyboard)
+            await self._send_message_with_keyboard(bot, chat_id, text, keyboard)
 
         if (
             chat_state.target_type == P2POfferType.BUY
@@ -283,54 +288,64 @@ class P2PMonitorManager:
             if post_balance is not None and post_balance < 1:
                 chat_state.enabled = False
                 self._repository.save_chat_state(chat_id, chat_state)
-                await self._send_text(
-                    chat_id,
-                    f"⚠️ Saldo insuficiente ({post_balance:.2f} QUSD). Monitoreo detenido.",
-                )
+                if bot is not None:
+                    await self._send_text(
+                        bot,
+                        chat_id,
+                        f"⚠️ Saldo insuficiente ({post_balance:.2f} QUSD). Monitoreo detenido.",
+                    )
 
         return report
 
-    def _start_task(self, chat_id: int) -> None:
-        if chat_id in self._tasks and not self._tasks[chat_id].done():
-            return
-        self._tasks[chat_id] = asyncio.create_task(self._run_chat_worker(chat_id))
+    def _schedule_job(
+        self,
+        chat_id: int,
+        interval_seconds: int,
+        job_queue: JobQueue,  # type: ignore[type-arg]
+    ) -> None:
+        name = _job_name(chat_id)
+        # Remove existing jobs for this chat
+        for job in job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
+        job_queue.run_repeating(
+            self._job_callback,
+            interval=max(interval_seconds, MIN_P2P_POLL_INTERVAL_SECONDS),
+            first=1,
+            name=name,
+            data={"chat_id": chat_id},
+        )
 
-    async def _run_chat_worker(self, chat_id: int) -> None:
-        while True:
-            chat_state = self._repository.get_chat_state(chat_id)
-            auth_state = self._state_store.get_chat_state(chat_id)
-            if not chat_state.enabled or not auth_state.has_bearer:
-                return
-            previous_error = chat_state.last_error
-            try:
-                report = await self.run_cycle_once(
-                    chat_id,
-                    auth_state,
-                    force=False,
-                    notify=True,
-                )
-                sleep_seconds = report.next_sleep_seconds or max(
-                    chat_state.poll_interval_seconds,
-                    MIN_P2P_POLL_INTERVAL_SECONDS,
-                )
-                if report.error_message and report.error_message != previous_error:
-                    await self._notify_error(chat_id, report.error_message)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                error_message = f"Unhandled P2P monitor error: {exc}"
-                LOGGER.exception(
-                    "Unhandled exception in P2P worker chat_id=%s",
-                    chat_id,
-                )
-                self._set_error(chat_id, chat_state, error_message)
-                if error_message != previous_error:
-                    await self._notify_error(chat_id, error_message)
-                sleep_seconds = max(
-                    chat_state.poll_interval_seconds,
-                    MIN_P2P_POLL_INTERVAL_SECONDS,
-                )
-            await asyncio.sleep(sleep_seconds)
+    async def _job_callback(self, context: Any) -> None:
+        job = context.job
+        chat_id: int = job.data["chat_id"]
+        bot: Bot = context.bot
+
+        chat_state = self._repository.get_chat_state(chat_id)
+        auth_state = self._state_store.get_chat_state(chat_id)
+        if not chat_state.enabled or not auth_state.has_bearer:
+            job.schedule_removal()
+            return
+
+        previous_error = chat_state.last_error
+        try:
+            report = await self.run_cycle_once(
+                chat_id,
+                auth_state,
+                force=False,
+                notify=True,
+                bot=bot,
+            )
+            if report.error_message and report.error_message != previous_error:
+                await self._notify_error(bot, chat_id, report.error_message)
+        except Exception as exc:
+            error_message = f"Unhandled P2P monitor error: {exc}"
+            LOGGER.exception(
+                "Unhandled exception in P2P job chat_id=%s",
+                chat_id,
+            )
+            self._set_error(chat_id, chat_state, error_message)
+            if error_message != previous_error:
+                await self._notify_error(bot, chat_id, error_message)
 
     async def _attempt_apply(
         self,
@@ -559,13 +574,43 @@ class P2PMonitorManager:
         chat_state.last_error_at = utcnow_iso()
         self._repository.save_chat_state(chat_id, chat_state)
 
-    async def _notify_error(self, chat_id: int, error_message: str) -> None:
-        await self._send_text(chat_id, error_message)
+    async def _notify_error(self, bot: Bot, chat_id: int, error_message: str) -> None:
+        await self._send_text(bot, chat_id, error_message)
         if self._settings.telegram_dev_chat_id is not None:
             await self._send_text(
+                bot,
                 self._settings.telegram_dev_chat_id,
                 f"chat_id={chat_id}\n{error_message}",
             )
+
+    @staticmethod
+    async def _send_text(bot: Bot, chat_id: int, text: str) -> None:
+        await bot.send_message(chat_id=chat_id, text=text)
+
+    @staticmethod
+    async def _send_message_with_keyboard(
+        bot: Bot,
+        chat_id: int,
+        text: str,
+        keyboard_rows: list[list[dict[str, str]]],
+    ) -> None:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        inline_keyboard = [
+            [
+                InlineKeyboardButton(
+                    text=btn["text"], callback_data=btn["callback_data"]
+                )
+                for btn in row
+            ]
+            for row in keyboard_rows
+        ]
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard),
+            parse_mode="HTML",
+        )
 
     def _build_backoff_seconds(self, chat_state: P2PMonitorChatState) -> float:
         base_value = max(
