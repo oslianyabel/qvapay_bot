@@ -651,10 +651,17 @@ async def _login_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if update.effective_chat is None:
         return ConversationHandler.END
     keyboard_rows = [
-        [{"text": "Carlitos", "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}carlitos"}],
+        [
+            {
+                "text": "Carlitos",
+                "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}carlitos",
+            }
+        ],
         [{"text": "Osliani", "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}osliani"}],
     ]
-    await reply_with_keyboard(update, "¿Con qué usuario deseas iniciar sesión?", keyboard_rows)
+    await reply_with_keyboard(
+        update, "¿Con qué usuario deseas iniciar sesión?", keyboard_rows
+    )
     return LOGIN_USER
 
 
@@ -667,7 +674,7 @@ async def _login_user_callback(
     await query.answer()
 
     data = query.data or ""
-    selected_user = data[len(LOGIN_USER_CALLBACK_PREFIX):]
+    selected_user = data[len(LOGIN_USER_CALLBACK_PREFIX) :]
     settings = context.bot_data["settings"]
 
     if selected_user == "carlitos":
@@ -693,7 +700,10 @@ def build_api_conversation(allowed: filters.BaseFilter) -> ConversationHandler: 
     return ConversationHandler(
         entry_points=[
             CommandHandler("login", _login_entry, filters=allowed),
-            *[CommandHandler(cmd, _api_entry, filters=allowed) for cmd in api_command_names],
+            *[
+                CommandHandler(cmd, _api_entry, filters=allowed)
+                for cmd in api_command_names
+            ],
         ],
         states={
             LOGIN_USER: [
