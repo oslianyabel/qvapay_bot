@@ -493,9 +493,12 @@ async def _execute_api(
 
     from qvapay_bot.handlers.common import (
         format_average_response,
+        format_check_session_response,
         format_login_response,
         format_profile_response,
     )
+
+    html_parse_mode: str | None = None
 
     if (
         spec.command == "average"
@@ -509,18 +512,26 @@ async def _execute_api(
         and isinstance(payload, dict)
     ):
         formatted = format_profile_response(payload)
+        html_parse_mode = "HTML"
     elif (
         spec.command == "login"
         and response.status_code == 200
         and isinstance(payload, dict)
     ):
         formatted = format_login_response(payload)
+        html_parse_mode = "HTML"
+    elif (
+        spec.command == "check_session"
+        and response.status_code == 200
+        and isinstance(payload, dict)
+    ):
+        formatted = format_check_session_response(payload)
     else:
         formatted = (
             f"/{spec.command}\nHTTP {response.status_code}\n\n{pretty_payload(payload)}"
         )
 
-    await reply_text(update, formatted)
+    await reply_text(update, formatted, parse_mode=html_parse_mode)
     return ConversationHandler.END
 
 

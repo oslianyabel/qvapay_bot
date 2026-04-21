@@ -2,4 +2,3 @@
 
 - en lo que se esta monitoreando debe mostrarse algo al usuario que indique la accion en curso (estilo buscando ofertas...)
 
-

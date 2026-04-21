@@ -422,6 +422,11 @@ def format_login_response(payload: dict[str, JsonValue]) -> str:
     )
 
 
+def format_check_session_response(payload: dict[str, JsonValue]) -> str:
+    success = payload.get("success") or payload.get("message") or "Sesión activa"
+    return f"✅ {success}"
+
+
 def format_help_for_command(spec: Any) -> str:
     examples: dict[str, str] = {
         "average": "/average",
