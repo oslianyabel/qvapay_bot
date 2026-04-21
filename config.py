@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-EMAIL = os.getenv("EMAIL")
+EMAIL = os.getenv("EMAIL")  # Carlitos
 PASSWORD = os.getenv("PASSWORD")
-TWO_FACTOR_CODE = os.getenv("TWO_VERIFICATION_CODE")
+
+EMAIL2 = os.getenv("EMAIL2")  # Osliani
+PASSWORD2 = os.getenv("PASSWORD2")

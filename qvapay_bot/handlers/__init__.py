@@ -16,6 +16,7 @@ from qvapay_bot.handlers.callback_handlers import (
     applied_detail_callback,
     applied_list_page_callback,
     cancel_p2p_callback,
+    login_user_callback,
     monitor_on_confirm_callback,
 )
 from qvapay_bot.handlers.command_handlers import (
@@ -111,6 +112,7 @@ def build_application(settings: Settings) -> Application:  # type: ignore[type-a
     app.add_handler(CallbackQueryHandler(applied_detail_callback, pattern=r"^adh:"))
     app.add_handler(CallbackQueryHandler(applied_list_page_callback, pattern=r"^adlp:"))
     app.add_handler(CallbackQueryHandler(cancel_p2p_callback, pattern=r"^cp2p:"))
+    app.add_handler(CallbackQueryHandler(login_user_callback, pattern=r"^login_user:"))
     app.add_handler(
         CallbackQueryHandler(monitor_on_confirm_callback, pattern=r"^mon_on:")
     )

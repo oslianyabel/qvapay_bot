@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 
 from qvapay_bot.handlers.common import (
     CUSTOM_HELP,
+    LOGIN_USER_CALLBACK_PREFIX,
     apply_profile_payload,
     fetch_coin_averages,
     format_average_response,
@@ -100,15 +101,37 @@ async def auth_status_command(
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat is None:
         return
+    keyboard_rows = [
+        [
+            {
+                "text": "Carlitos",
+                "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}carlitos",
+            }
+        ],
+        [{"text": "Osliani", "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}osliani"}],
+    ]
+    await reply_with_keyboard(
+        update, "¿Con qué usuario deseas iniciar sesión?", keyboard_rows
+    )
+
+
+async def execute_login(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    email: str,
+    password: str,
+) -> None:
+    """Ejecuta el login con las credenciales proporcionadas."""
+    if update.effective_chat is None:
+        return
     chat_id = update.effective_chat.id
-    settings = context.bot_data["settings"]
     qvapay_client = context.bot_data["qvapay_client"]
     state_store = context.bot_data["state_store"]
     auth_state = state_store.get_chat_state(chat_id)
 
     login_arguments = {
-        "email": settings.qvapay_email,
-        "password": settings.qvapay_password,
+        "email": email,
+        "password": password,
         "remember": True,
     }
     spec = COMMAND_INDEX["login"]
@@ -117,7 +140,6 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if response.status_code == 202:
         has_otp = isinstance(response.body, dict) and bool(response.body.get("has_otp"))
         code_hint = "6-digit OTP" if has_otp else "4-digit PIN"
-        # Store 2FA pending state in user_data
         context.user_data["pending_2fa"] = dict(login_arguments)  # type: ignore[index]
         context.user_data["pending_2fa_has_otp"] = has_otp  # type: ignore[index]
         await reply_text(

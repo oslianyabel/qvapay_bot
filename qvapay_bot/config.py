@@ -38,6 +38,8 @@ class Settings:
     allowed_chat_ids: frozenset[int]
     qvapay_email: str
     qvapay_password: str
+    qvapay_email2: str
+    qvapay_password2: str
 
     @classmethod
     def from_env(cls) -> Self:
@@ -73,6 +75,8 @@ class Settings:
 
         qvapay_email = os.getenv("EMAIL", "").strip()
         qvapay_password = os.getenv("PASSWORD", "").strip()
+        qvapay_email2 = os.getenv("EMAIL2", "").strip()
+        qvapay_password2 = os.getenv("PASSWORD2", "").strip()
 
         return cls(
             telegram_bot_token=telegram_bot_token,
@@ -84,4 +88,6 @@ class Settings:
             allowed_chat_ids=allowed_chat_ids,
             qvapay_email=qvapay_email,
             qvapay_password=qvapay_password,
+            qvapay_email2=qvapay_email2,
+            qvapay_password2=qvapay_password2,
         )
