@@ -313,7 +313,7 @@ def format_rule_change(rule_name: str, state: Any) -> str:
     if rule_name == "only_vip":
         return f"Solo VIP: {'sí' if rules.only_vip else 'no'}"
     if rule_name == "offer_type":
-        label = "Comprar" if state.target_type == P2POfferType.BUY else "Vender"
+        label = "Vender" if state.target_type == P2POfferType.BUY else "Comprar"
         return f"Tipo de oferta: {label}"
     if rule_name == "poll_interval":
         return f"Intervalo de consulta: {state.poll_interval_seconds}s"
@@ -372,6 +372,54 @@ def parse_updated_at(value: JsonValue | None) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def format_profile_response(payload: dict[str, JsonValue]) -> str:
+    name = str(payload.get("name") or "").strip()
+    lastname = str(payload.get("lastname") or "").strip()
+    full_name = f"{name} {lastname}".strip() or "-"
+    username = payload.get("username") or "-"
+    balance = payload.get("balance")
+    balance_str = f"${float(balance):.2f} QUSD" if isinstance(balance, (int, float)) else "-"
+    kyc = "✅" if payload.get("kyc") else "❌"
+    p2p = "✅" if payload.get("p2p_enabled") else "❌"
+    golden = "⭐" if payload.get("golden_check") else "❌"
+    rating = payload.get("average_rating")
+    rating_str = f"{float(rating):.1f}" if isinstance(rating, (int, float)) else "-"
+    phone = payload.get("phone") or "-"
+    telegram = payload.get("telegram") or "-"
+    return (
+        f"👤 <b>{full_name}</b> (@{username})\n"
+        f"\n"
+        f"💰 Saldo: <b>{balance_str}</b>\n"
+        f"📞 Teléfono: {phone}\n"
+        f"✈️ Telegram: {telegram}\n"
+        f"\n"
+        f"KYC: {kyc}  |  P2P: {p2p}  |  Golden: {golden}\n"
+        f"⭐ Calificación: {rating_str}"
+    )
+
+
+def format_login_response(payload: dict[str, JsonValue]) -> str:
+    me_raw = payload.get("me")
+    me: dict[str, JsonValue] = me_raw if isinstance(me_raw, dict) else {}
+    name = str(me.get("name") or "").strip()
+    username = me.get("username") or "-"
+    balance_raw = me.get("balance")
+    try:
+        balance_str = f"${float(str(balance_raw)):.2f} QUSD"
+    except (TypeError, ValueError):
+        balance_str = "-"
+    kyc = "✅" if me.get("kyc") else "❌"
+    p2p = "✅" if me.get("p2p_enabled") else "❌"
+    greeting = f"Hola, {name}!" if name else "¡Sesión iniciada!"
+    return (
+        f"✅ <b>{greeting}</b>\n"
+        f"\n"
+        f"👤 @{username}\n"
+        f"💰 Saldo: <b>{balance_str}</b>\n"
+        f"KYC: {kyc}  |  P2P: {p2p}"
+    )
 
 
 def format_help_for_command(spec: Any) -> str:

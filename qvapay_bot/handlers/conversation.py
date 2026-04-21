@@ -143,14 +143,14 @@ async def _prompt_next_rule_value(
         keyboard_rows = [
             [
                 {
-                    "text": f"🛒 Comprar — Das QUSD, recibes {coin_label}",
-                    "callback_data": f"{P2P_OFFER_TYPE_CALLBACK_PREFIX}buy",
+                    "text": f"🛒 Comprar — Compras QUSD, vendes {coin_label}",
+                    "callback_data": f"{P2P_OFFER_TYPE_CALLBACK_PREFIX}sell",
                 }
             ],
             [
                 {
-                    "text": f"💰 Vender — Das {coin_label}, recibes QUSD",
-                    "callback_data": f"{P2P_OFFER_TYPE_CALLBACK_PREFIX}sell",
+                    "text": f"💰 Vender — Vendes QUSD, compras {coin_label}",
+                    "callback_data": f"{P2P_OFFER_TYPE_CALLBACK_PREFIX}buy",
                 }
             ],
         ]
@@ -491,7 +491,11 @@ async def _execute_api(
             context, chat_id, spec.command, payload, auth_state
         )
 
-    from qvapay_bot.handlers.common import format_average_response
+    from qvapay_bot.handlers.common import (
+        format_average_response,
+        format_login_response,
+        format_profile_response,
+    )
 
     if (
         spec.command == "average"
@@ -499,6 +503,18 @@ async def _execute_api(
         and isinstance(payload, dict)
     ):
         formatted = format_average_response(payload)
+    elif (
+        spec.command == "profile"
+        and response.status_code == 200
+        and isinstance(payload, dict)
+    ):
+        formatted = format_profile_response(payload)
+    elif (
+        spec.command == "login"
+        and response.status_code == 200
+        and isinstance(payload, dict)
+    ):
+        formatted = format_login_response(payload)
     else:
         formatted = (
             f"/{spec.command}\nHTTP {response.status_code}\n\n{pretty_payload(payload)}"

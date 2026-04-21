@@ -121,6 +121,7 @@ def format_offer_notification(
         f"usuario_kyc: {'sí' if offer.advertiser.kyc else 'no'}",
         f"usuario_vip: {'sí' if offer.advertiser.vip else 'no'}",
         f"resultado: {result_icon} {_html.escape(result_text)}",
+        f'ver oferta: <a href="{QVAPAY_P2P_URL}{offer.uuid}">{QVAPAY_P2P_URL}{offer.uuid}</a>',
     ]
     text = "\n".join(lines)
 
@@ -368,9 +369,9 @@ def _status_emoji(status: str) -> str:
 def _format_offer_type_label(offer_type: P2POfferType, coin: str | None) -> str:
     coin_label = coin or "la moneda"
     if offer_type == P2POfferType.BUY:
-        return f"🛒 Comprar — Das QUSD, recibes {coin_label}"
+        return f"� Vender — Vendes QUSD, compras {coin_label}"
     if offer_type == P2POfferType.SELL:
-        return f"💰 Vender — Das {coin_label}, recibes QUSD"
+        return f"🛒 Comprar — Compras QUSD, vendes {coin_label}"
     return "🔄 Cualquiera"
 
 
