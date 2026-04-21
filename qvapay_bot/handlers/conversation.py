@@ -473,7 +473,22 @@ async def _execute_api(
     # Handle login 2FA
     if spec.command == "login" and response.status_code == 202:
         has_otp = isinstance(response.body, dict) and bool(response.body.get("has_otp"))
-        code_hint = "6-digit OTP" if has_otp else "4-digit PIN"
+        notified = isinstance(response.body, dict) and bool(response.body.get("notified"))
+        if has_otp:
+            prompt_2fa = (
+                "🔐 Se requiere verificación en dos pasos.\n"
+                "Ingresa el código de 6 dígitos de tu aplicación autenticadora."
+            )
+        elif notified:
+            prompt_2fa = (
+                "🔐 Se requiere verificación en dos pasos.\n"
+                "Te enviamos un PIN de 4 dígitos a tu correo. Revísalo e ingrésalo aquí."
+            )
+        else:
+            prompt_2fa = (
+                "🔐 Se requiere verificación en dos pasos.\n"
+                "Ingresa tu código de verificación de 4 dígitos."
+            )
         # Re-enter with 2FA field
         context.user_data["api_spec_command"] = "login"  # type: ignore[index]
         context.user_data["api_args"] = arguments  # type: ignore[index]
@@ -481,7 +496,7 @@ async def _execute_api(
         context.user_data["api_field_idx"] = 2  # type: ignore[index]
         await reply_text(
             update,
-            f"Se requiere 2FA. Envía tu {code_hint}. Envía {CANCEL_COMMAND} para cancelar.",
+            f"{prompt_2fa}\n\nEnvía {CANCEL_COMMAND} para cancelar.",
         )
         return API_FIELD
 
