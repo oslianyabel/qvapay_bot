@@ -31,6 +31,7 @@ def _load_dotenv(dotenv_path: Path) -> None:
 class Settings:
     telegram_bot_token: str
     telegram_dev_chat_id: int | None
+    carlitos_id: int | None
     qvapay_base_url: str
     http_timeout_seconds: float
     state_file: Path
@@ -53,6 +54,9 @@ class Settings:
         telegram_dev_chat_id = (
             int(raw_telegram_dev_chat_id) if raw_telegram_dev_chat_id else None
         )
+
+        raw_carlitos_id = os.getenv("CARLITOS_ID", "").strip()
+        carlitos_id = int(raw_carlitos_id) if raw_carlitos_id else None
 
         qvapay_base_url = os.getenv("QVAPAY_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
         http_timeout_seconds = float(
@@ -81,6 +85,7 @@ class Settings:
         return cls(
             telegram_bot_token=telegram_bot_token,
             telegram_dev_chat_id=telegram_dev_chat_id,
+            carlitos_id=carlitos_id,
             qvapay_base_url=qvapay_base_url,
             http_timeout_seconds=http_timeout_seconds,
             state_file=state_file,

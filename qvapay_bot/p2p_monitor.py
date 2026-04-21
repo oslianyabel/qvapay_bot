@@ -13,7 +13,7 @@ from qvapay_bot.p2p_filters import (
     sort_eligible_offers,
     summarize_discarded_reasons,
 )
-from qvapay_bot.p2p_formatter import format_offer_notification
+from qvapay_bot.p2p_formatter import format_offer_notification, format_offer_found_message
 from qvapay_bot.p2p_models import (
     MAX_HISTORY_ITEMS,
     MIN_P2P_POLL_INTERVAL_SECONDS,
@@ -109,6 +109,7 @@ class P2PMonitorManager:
         *,
         force: bool,
         notify: bool,
+        dry_run: bool = False,
         bot: Bot | None = None,
     ) -> P2PMonitorCycleReport:
         report = P2PMonitorCycleReport()
@@ -244,6 +245,16 @@ class P2PMonitorManager:
             or selected_offer.advertiser.uuid
             or "unknown",
         )
+
+        if bot is not None:
+            notify_chat_id = self._resolve_notify_chat_id(chat_id, auth_state)
+            await self._send_text(
+                bot,
+                notify_chat_id,
+                format_offer_found_message(selected_offer),
+                parse_mode="HTML",
+            )
+
         first_detected_at = self._remember_first_seen(
             chat_state, selected_offer.uuid, evaluated_at
         )
@@ -257,6 +268,13 @@ class P2PMonitorManager:
         chat_state.notified_history = trim_history(
             [matched_entry, *chat_state.notified_history]
         )
+
+        if dry_run:
+            chat_state.last_error = None
+            chat_state.last_error_at = None
+            chat_state.last_success_at = evaluated_at
+            self._repository.save_chat_state(chat_id, chat_state)
+            return report
 
         final_entry = await self._attempt_apply(
             chat_id,
@@ -584,9 +602,20 @@ class P2PMonitorManager:
                 f"chat_id={chat_id}\n{error_message}",
             )
 
+    def _resolve_notify_chat_id(self, chat_id: int, auth_state: ChatAuthState) -> int:
+        """Devuelve el Telegram chat ID personal del usuario autenticado."""
+        logged_in_as = auth_state.logged_in_as
+        if logged_in_as == "carlitos" and self._settings.carlitos_id is not None:
+            return self._settings.carlitos_id
+        if logged_in_as == "osliani" and self._settings.telegram_dev_chat_id is not None:
+            return self._settings.telegram_dev_chat_id
+        return chat_id
+
     @staticmethod
-    async def _send_text(bot: Bot, chat_id: int, text: str) -> None:
-        await bot.send_message(chat_id=chat_id, text=text)
+    async def _send_text(
+        bot: Bot, chat_id: int, text: str, *, parse_mode: str | None = None
+    ) -> None:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
 
     @staticmethod
     async def _send_message_with_keyboard(

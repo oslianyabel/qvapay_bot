@@ -243,6 +243,7 @@ async def monitor_test_command(
         auth_state,
         force=True,
         notify=False,
+        dry_run=True,
     )
     await reply_text(update, format_cycle_report(report))
 

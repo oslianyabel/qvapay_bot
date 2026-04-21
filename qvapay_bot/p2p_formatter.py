@@ -93,6 +93,20 @@ def format_monitor_on_confirmation(
     return "\n".join(lines)
 
 
+def format_offer_found_message(offer: P2POfferSnapshot) -> str:
+    """Mensaje amigable al detectar una oferta P2P coincidente."""
+    offer_type_label = "compra" if offer.offer_type == P2POfferType.BUY else "venta"
+    url = f"{QVAPAY_P2P_URL}{offer.uuid}"
+    return (
+        "🔔 <b>¡Oferta P2P encontrada!</b>\n\n"
+        f"💱 <b>Tipo:</b> {offer_type_label}\n"
+        f"🪙 <b>Moneda:</b> {_html.escape(offer.coin)}\n"
+        f"💰 <b>Monto:</b> {offer.amount:.2f} QUSD\n"
+        f"📈 <b>Ratio:</b> {offer.ratio:.4f}\n"
+        f'🔗 <a href="{url}">Ver oferta</a>'
+    )
+
+
 def format_offer_notification(
     offer: P2POfferSnapshot,
     *,

@@ -24,6 +24,7 @@ class ChatAuthState:
     kyc: bool = False
     p2p_enabled: bool = False
     pending_command: PendingCommandState | None = None
+    logged_in_as: str | None = None
 
     @property
     def has_bearer(self) -> bool:
@@ -79,10 +80,16 @@ class BotStateStore:
                 pending_command=self._load_pending_command(
                     value.get("pending_command")
                 ),
+                logged_in_as=self._parse_logged_in_as(value),
             )
             for key, value in chats.items()
             if isinstance(value, dict)
         }
+
+    @staticmethod
+    def _parse_logged_in_as(value: Any) -> str | None:
+        raw = value.get("logged_in_as")
+        return str(raw) if isinstance(raw, str) and raw.strip() else None
 
     @staticmethod
     def _load_pending_command(value: Any) -> PendingCommandState | None:

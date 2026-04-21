@@ -8,3 +8,6 @@ PASSWORD = os.getenv("PASSWORD")
 
 EMAIL2 = os.getenv("EMAIL2")  # Osliani
 PASSWORD2 = os.getenv("PASSWORD2")
+
+TELEGRAM_DEV_CHAT_ID = os.getenv("TELEGRAM_DEV_CHAT_ID")  # Osliani
+CARLITOS_ID = os.getenv("CARLITOS_ID")  # Carlitos

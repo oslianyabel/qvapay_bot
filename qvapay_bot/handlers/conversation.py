@@ -552,6 +552,9 @@ async def _persist_auth_side_effects(
         raw_me = body.get("me")
         me: dict[str, Any] = raw_me if isinstance(raw_me, dict) else {}
         apply_profile_payload(auth_state, me)
+        login_user = context.user_data.get("login_user")  # type: ignore[union-attr]
+        if isinstance(login_user, str) and login_user.strip():
+            auth_state.logged_in_as = login_user.strip()
         state_store.save_chat_state(chat_id, auth_state)
         await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
         return
@@ -717,6 +720,7 @@ async def _login_user_callback(
         return ConversationHandler.END
 
     await reply_text(update, f"Iniciando sesión como {user_label}...")
+    context.user_data["login_user"] = selected_user  # type: ignore[index]
     spec = COMMAND_INDEX["login"]
     arguments: dict[str, Any] = {"email": email, "password": password, "remember": True}
     return await _execute_api(update, context, spec, arguments)
