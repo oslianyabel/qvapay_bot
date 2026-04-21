@@ -18,6 +18,7 @@ from telegram.ext import (
 from qvapay_bot.handlers.common import (
     CANCEL_COMMAND,
     FIELD_PROMPTS,
+    LOGIN_USER_CALLBACK_PREFIX,
     MIN_P2P_POLL_INTERVAL_SECONDS,
     P2P_OFFER_TYPE_CALLBACK_PREFIX,
     P2P_RULE_COIN_CALLBACK_PREFIX,
@@ -50,6 +51,7 @@ LOGGER = logging.getLogger(__name__)
 # ConversationHandler states
 RULE_NAME, RULE_VALUE = range(2)
 API_FIELD = 10
+LOGIN_USER = 20
 
 
 # ---------------------------------------------------------------------------
@@ -645,14 +647,60 @@ def _find_next_missing(
     return None
 
 
+async def _login_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.effective_chat is None:
+        return ConversationHandler.END
+    keyboard_rows = [
+        [{"text": "Carlitos", "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}carlitos"}],
+        [{"text": "Osliani", "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}osliani"}],
+    ]
+    await reply_with_keyboard(update, "¿Con qué usuario deseas iniciar sesión?", keyboard_rows)
+    return LOGIN_USER
+
+
+async def _login_user_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    if query is None or update.effective_chat is None:
+        return ConversationHandler.END
+    await query.answer()
+
+    data = query.data or ""
+    selected_user = data[len(LOGIN_USER_CALLBACK_PREFIX):]
+    settings = context.bot_data["settings"]
+
+    if selected_user == "carlitos":
+        email: str = settings.qvapay_email
+        password: str = settings.qvapay_password
+        user_label = "Carlitos"
+    elif selected_user == "osliani":
+        email = settings.qvapay_email2
+        password = settings.qvapay_password2
+        user_label = "Osliani"
+    else:
+        await reply_text(update, "Usuario no reconocido.")
+        return ConversationHandler.END
+
+    await reply_text(update, f"Iniciando sesión como {user_label}...")
+    spec = COMMAND_INDEX["login"]
+    arguments: dict[str, Any] = {"email": email, "password": password, "remember": True}
+    return await _execute_api(update, context, spec, arguments)
+
+
 def build_api_conversation(allowed: filters.BaseFilter) -> ConversationHandler:  # type: ignore[type-arg]
     api_command_names = [s.command for s in COMMAND_SPECS if s.command != "login"]
     return ConversationHandler(
         entry_points=[
-            CommandHandler(cmd, _api_entry, filters=allowed)
-            for cmd in api_command_names
+            CommandHandler("login", _login_entry, filters=allowed),
+            *[CommandHandler(cmd, _api_entry, filters=allowed) for cmd in api_command_names],
         ],
         states={
+            LOGIN_USER: [
+                CallbackQueryHandler(
+                    _login_user_callback, pattern=f"^{LOGIN_USER_CALLBACK_PREFIX}"
+                ),
+            ],
             API_FIELD: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND & allowed, _api_field_text

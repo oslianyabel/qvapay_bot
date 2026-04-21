@@ -10,8 +10,6 @@ from telegram.ext import ContextTypes
 
 from qvapay_bot.handlers.common import (
     CUSTOM_HELP,
-    LOGIN_USER_CALLBACK_PREFIX,
-    apply_profile_payload,
     fetch_coin_averages,
     format_average_response,
     format_help_for_command,
@@ -96,71 +94,6 @@ async def auth_status_command(
         f"Nombre de usuario: {state.username or '-'}",
     ]
     await reply_text(update, "\n".join(status_lines))
-
-
-async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_chat is None:
-        return
-    keyboard_rows = [
-        [
-            {
-                "text": "Carlitos",
-                "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}carlitos",
-            }
-        ],
-        [{"text": "Osliani", "callback_data": f"{LOGIN_USER_CALLBACK_PREFIX}osliani"}],
-    ]
-    await reply_with_keyboard(
-        update, "¿Con qué usuario deseas iniciar sesión?", keyboard_rows
-    )
-
-
-async def execute_login(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    email: str,
-    password: str,
-) -> None:
-    """Ejecuta el login con las credenciales proporcionadas."""
-    if update.effective_chat is None:
-        return
-    chat_id = update.effective_chat.id
-    qvapay_client = context.bot_data["qvapay_client"]
-    state_store = context.bot_data["state_store"]
-    auth_state = state_store.get_chat_state(chat_id)
-
-    login_arguments = {
-        "email": email,
-        "password": password,
-        "remember": True,
-    }
-    spec = COMMAND_INDEX["login"]
-    response = await qvapay_client.execute(spec, login_arguments, auth_state)
-
-    if response.status_code == 202:
-        has_otp = isinstance(response.body, dict) and bool(response.body.get("has_otp"))
-        code_hint = "6-digit OTP" if has_otp else "4-digit PIN"
-        context.user_data["pending_2fa"] = dict(login_arguments)  # type: ignore[index]
-        context.user_data["pending_2fa_has_otp"] = has_otp  # type: ignore[index]
-        await reply_text(
-            update,
-            f"Se requiere 2FA. Envía tu {code_hint}. Envía {'/cancel'} para cancelar.",
-        )
-        return
-
-    if response.status_code < 400 and isinstance(response.body, dict):
-        access_token = response.body.get("accessToken")
-        if isinstance(access_token, str) and access_token.strip():
-            auth_state.bearer_token = access_token.strip()
-        raw_me = response.body.get("me")
-        me: dict[str, Any] = raw_me if isinstance(raw_me, dict) else {}
-        apply_profile_payload(auth_state, me)
-        state_store.save_chat_state(chat_id, auth_state)
-        p2p_monitor_manager = context.bot_data["p2p_monitor_manager"]
-        await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
-
-    formatted = _format_api_response(spec, response.status_code, response.body)
-    await reply_text(update, formatted)
 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

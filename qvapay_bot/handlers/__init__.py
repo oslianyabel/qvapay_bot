@@ -16,7 +16,6 @@ from qvapay_bot.handlers.callback_handlers import (
     applied_detail_callback,
     applied_list_page_callback,
     cancel_p2p_callback,
-    login_user_callback,
     monitor_on_confirm_callback,
 )
 from qvapay_bot.handlers.command_handlers import (
@@ -24,7 +23,6 @@ from qvapay_bot.handlers.command_handlers import (
     balance_command,
     help_command,
     history_command,
-    login_command,
     monitor_off_command,
     monitor_on_command,
     monitor_status_command,
@@ -95,7 +93,6 @@ def build_application(settings: Settings) -> Application:  # type: ignore[type-a
     app.add_handler(CommandHandler(["start", "help"], help_command, filters=allowed))
     app.add_handler(CommandHandler("cancel", help_command, filters=allowed))
     app.add_handler(CommandHandler("auth_status", auth_status_command, filters=allowed))
-    app.add_handler(CommandHandler("login", login_command, filters=allowed))
     app.add_handler(CommandHandler("balance", balance_command, filters=allowed))
     app.add_handler(CommandHandler("monitor_on", monitor_on_command, filters=allowed))
     app.add_handler(CommandHandler("monitor_off", monitor_off_command, filters=allowed))
@@ -112,7 +109,6 @@ def build_application(settings: Settings) -> Application:  # type: ignore[type-a
     app.add_handler(CallbackQueryHandler(applied_detail_callback, pattern=r"^adh:"))
     app.add_handler(CallbackQueryHandler(applied_list_page_callback, pattern=r"^adlp:"))
     app.add_handler(CallbackQueryHandler(cancel_p2p_callback, pattern=r"^cp2p:"))
-    app.add_handler(CallbackQueryHandler(login_user_callback, pattern=r"^login_user:"))
     app.add_handler(
         CallbackQueryHandler(monitor_on_confirm_callback, pattern=r"^mon_on:")
     )

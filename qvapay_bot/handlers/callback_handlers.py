@@ -8,7 +8,6 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from qvapay_bot.handlers.common import (
-    LOGIN_USER_CALLBACK_PREFIX,
     fetch_coin_averages,
     reply_text,
     reply_with_keyboard,
@@ -179,34 +178,3 @@ async def monitor_on_confirm_callback(
                 if isinstance(raw, (int, float)):
                     balance = float(raw)
         await reply_text(update, format_monitor_status(monitor_state, balance))
-
-
-async def login_user_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    query = update.callback_query
-    if query is None or update.effective_chat is None:
-        return
-    await query.answer()
-
-    data = query.data or ""
-    selected_user = data[len(LOGIN_USER_CALLBACK_PREFIX) :]
-    settings = context.bot_data["settings"]
-
-    if selected_user == "carlitos":
-        email = settings.qvapay_email
-        password = settings.qvapay_password
-        user_label = "Carlitos"
-    elif selected_user == "osliani":
-        email = settings.qvapay_email2
-        password = settings.qvapay_password2
-        user_label = "Osliani"
-    else:
-        await reply_text(update, "Usuario no reconocido.")
-        return
-
-    await reply_text(update, f"Iniciando sesión como {user_label}...")
-
-    from qvapay_bot.handlers.command_handlers import execute_login
-
-    await execute_login(update, context, email, password)
