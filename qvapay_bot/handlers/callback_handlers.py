@@ -15,7 +15,6 @@ from qvapay_bot.handlers.common import (
 from qvapay_bot.p2p_formatter import (
     format_applied_detail,
     format_applied_list_keyboard,
-    format_monitor_status,
 )
 from qvapay_bot.qvapay_client import COMMAND_INDEX, pretty_payload
 
@@ -163,18 +162,10 @@ async def monitor_on_confirm_callback(
         state_store = context.bot_data["state_store"]
         p2p_repository = context.bot_data["p2p_repository"]
         p2p_monitor_manager = context.bot_data["p2p_monitor_manager"]
-        qvapay_client = context.bot_data["qvapay_client"]
         auth_state = state_store.get_chat_state(chat_id)
         monitor_state = p2p_repository.get_chat_state(chat_id)
         monitor_state.enabled = True
         monitor_state.poll_interval_seconds = poll_interval
         p2p_repository.save_chat_state(chat_id, monitor_state)
         await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
-        balance: float | None = None
-        if auth_state.has_bearer:
-            resp = await qvapay_client.execute(COMMAND_INDEX["profile"], {}, auth_state)
-            if resp.status_code == 200 and isinstance(resp.body, dict):
-                raw = resp.body.get("balance")
-                if isinstance(raw, (int, float)):
-                    balance = float(raw)
-        await reply_text(update, format_monitor_status(monitor_state, balance))
+        await reply_text(update, "monitor activado")
