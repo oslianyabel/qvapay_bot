@@ -70,3 +70,23 @@ def test_repository_can_find_processed_offer(tmp_path: Path) -> None:
 
     assert found is not None
     assert found.result == OfferProcessResult.LOST_RACE
+
+
+# uv run pytest -s tests/test_p2p_repository.py
+def test_repository_shares_state_between_chat_ids(tmp_path: Path) -> None:
+    repository = P2PMonitorStateStore(tmp_path / "p2p_state.json")
+
+    state_a = repository.get_chat_state(111)
+    state_a.enabled = True
+    state_a.rules.coin = "BANK_CUP"
+    repository.save_chat_state(111, state_a)
+
+    state_b = repository.get_chat_state(222)
+    assert state_b.enabled is True
+    assert state_b.rules.coin == "BANK_CUP"
+
+    state_b.rules.coin = "ZELLE"
+    repository.save_chat_state(222, state_b)
+
+    state_a_after = repository.get_chat_state(111)
+    assert state_a_after.rules.coin == "ZELLE"

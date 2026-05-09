@@ -38,8 +38,8 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-def _job_name(chat_id: int) -> str:
-    return f"p2p_monitor_{chat_id}"
+def _job_name() -> str:
+    return "p2p_monitor_shared"
 
 
 class P2PMonitorManager:
@@ -62,12 +62,17 @@ class P2PMonitorManager:
         if job_queue is None:
             return
         restored = 0
-        for chat_id, auth_state in self._state_store.iter_chat_states():
-            chat_state = self._repository.get_chat_state(chat_id)
-            if chat_state.enabled and auth_state.has_bearer:
-                self._schedule_job(chat_id, chat_state.poll_interval_seconds, job_queue)
-                restored += 1
-        LOGGER.info("P2P monitor jobs restored count=%s", restored)
+        control_chat_id = self._default_control_chat_id()
+        auth_state = self._state_store.get_chat_state(control_chat_id)
+        chat_state = self._repository.get_chat_state(control_chat_id)
+        if chat_state.enabled and auth_state.has_bearer:
+            self._schedule_job(
+                control_chat_id,
+                chat_state.poll_interval_seconds,
+                job_queue,
+            )
+            restored = 1
+        LOGGER.info("P2P monitor shared jobs restored count=%s", restored)
 
     async def restart_chat(
         self,
@@ -95,12 +100,12 @@ class P2PMonitorManager:
     async def stop_chat(self, chat_id: int, job_queue: JobQueue | None) -> None:  # type: ignore[type-arg]
         if job_queue is None:
             return
-        name = _job_name(chat_id)
+        name = _job_name()
         jobs = job_queue.get_jobs_by_name(name)
         for job in jobs:
             job.schedule_removal()
         if jobs:
-            LOGGER.info("Stopped P2P monitor job chat_id=%s", chat_id)
+            LOGGER.info("Stopped shared P2P monitor job chat_id=%s", chat_id)
 
     async def run_cycle_once(
         self,
@@ -115,7 +120,7 @@ class P2PMonitorManager:
         report = P2PMonitorCycleReport()
         chat_state = self._repository.get_chat_state(chat_id)
         if not force and not chat_state.enabled:
-            report.error_message = "P2P monitor is disabled for this chat."
+            report.error_message = "P2P monitor is disabled."
             return report
         if not auth_state.has_bearer:
             error_message = "A bearer token is required to monitor P2P offers."
@@ -200,6 +205,11 @@ class P2PMonitorManager:
         evaluated_at = utcnow_iso()
         self._remember_cycle_entries(chat_state, evaluations, evaluated_at)
 
+        if notify and bot is not None:
+            await self._notify_all_evaluated_offers(
+                bot, chat_state.rules, evaluations
+            )
+
         sorted_candidates = sort_eligible_offers(evaluations, chat_state.rules)
 
         if chat_state.target_type == P2POfferType.BUY and sorted_candidates:
@@ -214,9 +224,8 @@ class P2PMonitorManager:
                     chat_state.enabled = False
                     self._repository.save_chat_state(chat_id, chat_state)
                     if bot is not None:
-                        await self._send_text(
+                        await self._broadcast_text(
                             bot,
-                            chat_id,
                             f"⚠️ Saldo insuficiente ({balance:.2f} QUSD). Monitoreo detenido.",
                         )
                     report.error_message = "Balance too low."
@@ -247,10 +256,8 @@ class P2PMonitorManager:
         )
 
         if bot is not None:
-            notify_chat_id = self._resolve_notify_chat_id(chat_id, auth_state)
-            await self._send_text(
+            await self._broadcast_text(
                 bot,
-                notify_chat_id,
                 format_offer_found_message(selected_offer),
                 parse_mode="HTML",
             )
@@ -297,7 +304,7 @@ class P2PMonitorManager:
                 result_text=f"{final_entry.result.value}: {final_entry.reason or '-'}",
                 result=final_entry.result,
             )
-            await self._send_message_with_keyboard(bot, chat_id, text, keyboard)
+            await self._broadcast_message_with_keyboard(bot, text, keyboard)
 
         if (
             chat_state.target_type == P2POfferType.BUY
@@ -308,9 +315,8 @@ class P2PMonitorManager:
                 chat_state.enabled = False
                 self._repository.save_chat_state(chat_id, chat_state)
                 if bot is not None:
-                    await self._send_text(
+                    await self._broadcast_text(
                         bot,
-                        chat_id,
                         f"⚠️ Saldo insuficiente ({post_balance:.2f} QUSD). Monitoreo detenido.",
                     )
 
@@ -322,8 +328,8 @@ class P2PMonitorManager:
         interval_seconds: int,
         job_queue: JobQueue,  # type: ignore[type-arg]
     ) -> None:
-        name = _job_name(chat_id)
-        # Remove existing jobs for this chat
+        name = _job_name()
+        # Remove existing shared job.
         for job in job_queue.get_jobs_by_name(name):
             job.schedule_removal()
         job_queue.run_repeating(
@@ -594,13 +600,72 @@ class P2PMonitorManager:
         self._repository.save_chat_state(chat_id, chat_state)
 
     async def _notify_error(self, bot: Bot, chat_id: int, error_message: str) -> None:
-        await self._send_text(bot, chat_id, error_message)
+        await self._broadcast_text(bot, error_message)
         if self._settings.telegram_dev_chat_id is not None:
             await self._send_text(
                 bot,
                 self._settings.telegram_dev_chat_id,
                 f"chat_id={chat_id}\n{error_message}",
             )
+
+    def _default_control_chat_id(self) -> int:
+        if self._settings.allowed_chat_ids:
+            return next(iter(self._settings.allowed_chat_ids))
+        return 0
+
+    def _notification_targets(self) -> list[int]:
+        return sorted(self._settings.allowed_chat_ids)
+
+    async def _broadcast_text(
+        self,
+        bot: Bot,
+        text: str,
+        *,
+        parse_mode: str | None = None,
+    ) -> None:
+        for target_chat_id in self._notification_targets():
+            await self._send_text(
+                bot,
+                target_chat_id,
+                text,
+                parse_mode=parse_mode,
+            )
+
+    async def _broadcast_message_with_keyboard(
+        self,
+        bot: Bot,
+        text: str,
+        keyboard_rows: list[list[dict[str, str]]],
+    ) -> None:
+        for target_chat_id in self._notification_targets():
+            await self._send_message_with_keyboard(
+                bot,
+                target_chat_id,
+                text,
+                keyboard_rows,
+            )
+
+    async def _notify_all_evaluated_offers(
+        self,
+        bot: Bot,
+        rules: Any,
+        evaluations: list[OfferEvaluation],
+    ) -> None:
+        """Envía notificación para cada oferta evaluada de la moneda seleccionada."""
+        if not rules.coin:
+            return
+
+        relevant_evaluations = [
+            ev for ev in evaluations if ev.offer.coin == rules.coin
+        ]
+        if not relevant_evaluations:
+            return
+
+        from qvapay_bot.p2p_formatter import format_offer_evaluation
+
+        for evaluation in relevant_evaluations:
+            message = format_offer_evaluation(evaluation)
+            await self._broadcast_text(bot, message, parse_mode="HTML")
 
     def _resolve_notify_chat_id(self, chat_id: int, auth_state: ChatAuthState) -> int:
         """Devuelve el Telegram chat ID personal del usuario autenticado."""

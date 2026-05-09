@@ -4,6 +4,7 @@ import html as _html
 from datetime import datetime
 
 from qvapay_bot.p2p_models import (
+    OfferEvaluation,
     OfferHistoryEntry,
     OfferProcessResult,
     P2PMonitorChatState,
@@ -151,6 +152,25 @@ def format_offer_notification(
         ]
 
     return text, keyboard
+
+
+def format_offer_evaluation(evaluation: OfferEvaluation, result: str = "") -> str:
+    """Formatea el estado de una oferta individual tras ser evaluada."""
+    offer = evaluation.offer
+    offer_type_label = "compra" if offer.offer_type == P2POfferType.BUY else "venta"
+    status_text = result if result else (
+        "✅ elegible" if evaluation.is_eligible else f"❌ descartada: {', '.join(evaluation.reasons) or 'motivo desconocido'}"
+    )
+    url = f"{QVAPAY_P2P_URL}{offer.uuid}"
+    lines = [
+        f"<b>{offer_type_label.upper()}</b> {offer.coin}",
+        f"monto: {offer.amount:.2f} QUSD → {offer.receive:.2f}",
+        f"ratio: {offer.ratio:.4f}",
+        f"usuario: {_html.escape(offer.advertiser.username or 'anónimo')}",
+        f"estado: {status_text}",
+        f'<a href="{url}">ver oferta</a>',
+    ]
+    return "\n".join(lines)
 
 
 def format_cycle_report(report: P2PMonitorCycleReport) -> str:

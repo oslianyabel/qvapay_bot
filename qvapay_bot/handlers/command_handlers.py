@@ -64,10 +64,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/auth_status - Muestra el estado de autenticación",
         "",
         "Monitor P2P:",
-        "/monitor_on - Activa el monitor P2P para este chat",
+        "/monitor_on - Activa el monitor P2P compartido",
         "/monitor_off - Desactiva el monitor P2P",
         "/monitor_status - Muestra el estado y configuración del monitor",
-        "/rules - Configura una regla del monitor de forma interactiva",
+        "/rules - Configura una regla global del monitor de forma interactiva",
         "/rules_show - Muestra las reglas P2P activas",
         "/history - Lista las últimas ofertas procesadas por el monitor",
         "/monitor_test - Ejecuta un ciclo de monitoreo y muestra el resultado",
@@ -172,7 +172,7 @@ async def monitor_off_command(
     monitor_state.enabled = False
     p2p_repository.save_chat_state(chat_id, monitor_state)
     await p2p_monitor_manager.stop_chat(chat_id, context.job_queue)
-    await reply_text(update, "⏹ Monitoreo desactivado.")
+    await reply_text(update, "⏹ Monitoreo compartido desactivado.")
 
 
 async def monitor_status_command(

@@ -19,21 +19,18 @@ from qvapay_bot.p2p_models import (
 class P2PMonitorStateStore:
     def __init__(self, file_path: Path) -> None:
         self._file_path = file_path
-        self._chats: dict[str, P2PMonitorChatState] = {}
+        self._shared_state: P2PMonitorChatState = P2PMonitorChatState()
         self._load()
 
     def get_chat_state(self, chat_id: int) -> P2PMonitorChatState:
-        key = str(chat_id)
-        if key not in self._chats:
-            self._chats[key] = P2PMonitorChatState()
-        return self._chats[key]
+        return self._shared_state
 
     def save_chat_state(self, chat_id: int, state: P2PMonitorChatState) -> None:
-        self._chats[str(chat_id)] = state
+        self._shared_state = state
         self._save()
 
     def list_enabled_chat_ids(self) -> list[int]:
-        return [int(chat_id) for chat_id, state in self._chats.items() if state.enabled]
+        return [0] if self._shared_state.enabled else []
 
     def find_history_entry(
         self, chat_id: int, offer_uuid: str
@@ -56,21 +53,31 @@ class P2PMonitorStateStore:
             return
 
         raw_payload = json.loads(self._file_path.read_text(encoding="utf-8"))
+        raw_shared = raw_payload.get("shared")
+        if isinstance(raw_shared, dict):
+            self._shared_state = _chat_state_from_dict(raw_shared)
+            return
+
         chats = raw_payload.get("chats", {})
-        self._chats = {
-            chat_id: _chat_state_from_dict(value)
-            for chat_id, value in chats.items()
-            if isinstance(chat_id, str) and isinstance(value, dict)
-        }
+        if not isinstance(chats, dict):
+            self._shared_state = P2PMonitorChatState()
+            return
+
+        first_chat_payload = next(
+            (value for value in chats.values() if isinstance(value, dict)),
+            None,
+        )
+        self._shared_state = (
+            _chat_state_from_dict(first_chat_payload)
+            if first_chat_payload is not None
+            else P2PMonitorChatState()
+        )
 
     def _save(self) -> None:
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": 1,
-            "chats": {
-                chat_id: _chat_state_to_dict(state)
-                for chat_id, state in self._chats.items()
-            },
+            "shared": _chat_state_to_dict(self._shared_state),
         }
         self._file_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=True),
