@@ -133,10 +133,10 @@ AVERAGE_TICK_ICONS: dict[str, str] = {
 }
 
 CUSTOM_HELP: dict[str, str] = {
-    "monitor_on": "/monitor_on\nActiva el monitor P2P compartido para todos los usuarios autorizados. El bot preguntará el intervalo y mostrará las reglas para confirmar.",
-    "monitor_off": "/monitor_off\nDesactiva el monitor P2P compartido.",
+    "monitor_on": "/monitor_on\nActiva el monitor P2P para este chat. El bot preguntará el intervalo y mostrará las reglas para confirmar.",
+    "monitor_off": "/monitor_off\nDesactiva el monitor P2P para este chat.",
     "monitor_status": "/monitor_status\nMuestra la configuración del monitor, las reglas y el último estado de ejecución.",
-    "rules": "/rules\nConfigura una regla global de forma interactiva: moneda, ratio, monto, solo KYC, solo VIP, tipo de oferta o reiniciar.",
+    "rules": "/rules\nConfigura una regla de forma interactiva: moneda, ratio, monto, solo KYC, solo VIP, tipo de oferta o reiniciar.",
     "rules_show": "/rules_show\nMuestra las reglas P2P activas.",
     "history": "/history\nLista las ofertas P2P procesadas por el monitor.",
     "monitor_test": "/monitor_test\nEjecuta un ciclo de monitoreo inmediatamente y muestra el resultado.",

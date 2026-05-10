@@ -334,6 +334,7 @@ def _parse_rule_field_value(field_name: str, raw_value: str) -> Any:
 def build_rules_conversation(allowed: filters.BaseFilter) -> ConversationHandler:  # type: ignore[type-arg]
     return ConversationHandler(
         entry_points=[CommandHandler("rules", _rules_entry, filters=allowed)],
+        allow_reentry=True,
         states={
             RULE_NAME: [
                 CallbackQueryHandler(
@@ -751,6 +752,7 @@ def build_api_conversation(allowed: filters.BaseFilter) -> ConversationHandler: 
                 for cmd in api_command_names
             ],
         ],
+        allow_reentry=True,
         states={
             LOGIN_USER: [
                 CallbackQueryHandler(

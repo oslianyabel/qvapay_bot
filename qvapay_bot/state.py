@@ -38,60 +38,53 @@ class ChatAuthState:
 class BotStateStore:
     def __init__(self, file_path: Path) -> None:
         self._file_path = file_path
-        self._shared_state: ChatAuthState = ChatAuthState()
+        self._chats: dict[str, ChatAuthState] = {}
         self._load()
 
     def get_chat_state(self, chat_id: int) -> ChatAuthState:
-        return self._shared_state
+        key = str(chat_id)
+        if key not in self._chats:
+            self._chats[key] = ChatAuthState()
+        return self._chats[key]
 
     def save_chat_state(self, chat_id: int, state: ChatAuthState) -> None:
-        self._shared_state = state
+        self._chats[str(chat_id)] = state
         self._save()
 
     def clear_chat_state(self, chat_id: int) -> None:
-        self._shared_state = ChatAuthState()
+        self._chats[str(chat_id)] = ChatAuthState()
         self._save()
 
     def iter_chat_states(self) -> list[tuple[int, ChatAuthState]]:
-        return [(0, self._shared_state)]
+        return [
+            (int(chat_id), state)
+            for chat_id, state in self._chats.items()
+            if chat_id.isdigit()
+        ]
 
     def _load(self) -> None:
         if not self._file_path.exists():
             return
 
         raw_data = json.loads(self._file_path.read_text(encoding="utf-8"))
-        raw_shared = raw_data.get("shared")
-        if isinstance(raw_shared, dict):
-            self._shared_state = self._parse_auth_state(raw_shared)
-            return
-
         chats = raw_data.get("chats", {})
-        if not isinstance(chats, dict):
-            self._shared_state = ChatAuthState()
-            return
-
-        first_chat_payload = next(
-            (value for value in chats.values() if isinstance(value, dict)),
-            None,
-        )
-        self._shared_state = (
-            self._parse_auth_state(first_chat_payload)
-            if first_chat_payload is not None
-            else ChatAuthState()
-        )
-
-    def _parse_auth_state(self, value: dict[str, Any]) -> ChatAuthState:
-        return ChatAuthState(
-            bearer_token=value.get("bearer_token"),
-            app_id=value.get("app_id"),
-            app_secret=value.get("app_secret"),
-            user_uuid=value.get("user_uuid"),
-            username=value.get("username"),
-            kyc=bool(value.get("kyc", False)),
-            p2p_enabled=bool(value.get("p2p_enabled", False)),
-            pending_command=self._load_pending_command(value.get("pending_command")),
-            logged_in_as=self._parse_logged_in_as(value),
-        )
+        self._chats = {
+            key: ChatAuthState(
+                bearer_token=value.get("bearer_token"),
+                app_id=value.get("app_id"),
+                app_secret=value.get("app_secret"),
+                user_uuid=value.get("user_uuid"),
+                username=value.get("username"),
+                kyc=bool(value.get("kyc", False)),
+                p2p_enabled=bool(value.get("p2p_enabled", False)),
+                pending_command=self._load_pending_command(
+                    value.get("pending_command")
+                ),
+                logged_in_as=self._parse_logged_in_as(value),
+            )
+            for key, value in chats.items()
+            if isinstance(value, dict)
+        }
 
     @staticmethod
     def _parse_logged_in_as(value: Any) -> str | None:
@@ -126,7 +119,7 @@ class BotStateStore:
 
     def _save(self) -> None:
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"version": 1, "shared": asdict(self._shared_state)}
+        payload = {"chats": {key: asdict(value) for key, value in self._chats.items()}}
         self._file_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=True),
             encoding="utf-8",
