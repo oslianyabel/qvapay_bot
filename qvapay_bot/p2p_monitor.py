@@ -175,7 +175,7 @@ class P2PMonitorManager:
                 offer,
                 chat_state.rules,
                 target_type=chat_state.target_type,
-                current_user_uuid=auth_state.user_uuid,
+                current_user_uuid=None,
                 processed_offer_timestamps=chat_state.processed_offer_timestamps,
             )
             for offer in offers
