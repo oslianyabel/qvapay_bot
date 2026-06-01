@@ -218,11 +218,12 @@ def format_cycle_report(report: P2PMonitorCycleReport) -> str:
     if report.selected_offer is not None:
         offer = report.selected_offer
         advertiser = offer.advertiser.username or offer.advertiser.uuid or "desconocido"
+        offer_link = f"{QVAPAY_P2P_URL}{offer.uuid}"
         lines.extend(
             [
                 "",
                 "oferta_seleccionada:",
-                f"  uuid: {offer.uuid}",
+                f"  link: {offer_link}",
                 f"  moneda: {offer.coin}",
                 f"  monto: {offer.amount}",
                 f"  recibe: {offer.receive}",
@@ -231,19 +232,21 @@ def format_cycle_report(report: P2PMonitorCycleReport) -> str:
             ]
         )
     if report.final_entry is not None:
+        selected_link = f"{QVAPAY_P2P_URL}{report.final_entry.uuid}"
         lines.extend(
             [
                 "",
-                f"seleccionado_uuid: {report.final_entry.uuid}",
+                f"seleccionado_link: {selected_link}",
                 f"seleccionado_resultado: {report.final_entry.result.value if report.final_entry.result else 'n/a'}",
                 f"seleccionado_razon: {report.final_entry.reason or '-'}",
             ]
         )
     elif report.matched_entry is not None:
+        selected_link = f"{QVAPAY_P2P_URL}{report.matched_entry.uuid}"
         lines.extend(
             [
                 "",
-                f"seleccionado_uuid: {report.matched_entry.uuid}",
+                f"seleccionado_link: {selected_link}",
                 "seleccionado_resultado: solo_coincidencia",
             ]
         )
