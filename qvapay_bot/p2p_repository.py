@@ -120,6 +120,9 @@ def _chat_state_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
         last_error=_coerce_optional_str(raw_state.get("last_error")),
         last_error_at=_coerce_optional_str(raw_state.get("last_error_at")),
         last_success_at=_coerce_optional_str(raw_state.get("last_success_at")),
+        last_cycle_info_message_id=_coerce_optional_int(
+            raw_state.get("last_cycle_info_message_id")
+        ),
     )
 
 
@@ -163,6 +166,7 @@ def _chat_state_to_dict(state: P2PMonitorChatState) -> dict[str, Any]:
         "last_error": state.last_error,
         "last_error_at": state.last_error_at,
         "last_success_at": state.last_success_at,
+        "last_cycle_info_message_id": state.last_cycle_info_message_id,
     }
 
 
@@ -245,6 +249,14 @@ def _coerce_int(value: Any, default: int) -> int:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return default
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
 
 
 def _coerce_str_list(value: Any) -> list[str]:

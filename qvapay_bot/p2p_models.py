@@ -103,6 +103,7 @@ class P2PMonitorChatState:
     last_error: str | None = None
     last_error_at: str | None = None
     last_success_at: str | None = None
+    last_cycle_info_message_id: int | None = None
 
 
 @dataclass(slots=True)

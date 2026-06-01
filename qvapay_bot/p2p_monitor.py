@@ -35,7 +35,7 @@ from qvapay_bot.qvapay_client import COMMAND_INDEX, QvaPayClient
 from qvapay_bot.state import BotStateStore, ChatAuthState
 
 if TYPE_CHECKING:
-    from telegram import Bot
+    from telegram import Bot, Message
     from telegram.ext import JobQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -359,6 +359,7 @@ class P2PMonitorManager:
                 notify=True,
                 bot=bot,
             )
+            await self._upsert_cycle_info_message(bot, chat_id, chat_state, report)
             if report.error_message and report.error_message != previous_error:
                 await self._notify_error(bot, chat_id, report.error_message)
         except Exception as exc:
@@ -619,11 +620,63 @@ class P2PMonitorManager:
             return self._settings.telegram_dev_chat_id
         return chat_id
 
+    async def _upsert_cycle_info_message(
+        self,
+        bot: Bot,
+        chat_id: int,
+        chat_state: P2PMonitorChatState,
+        report: P2PMonitorCycleReport,
+    ) -> None:
+        previous_message_id = chat_state.last_cycle_info_message_id
+        if previous_message_id is not None:
+            await self._delete_message(bot, chat_id, previous_message_id)
+
+        text = self._build_cycle_info_text(report)
+        sent = await self._send_text(bot, chat_id, text)
+        chat_state.last_cycle_info_message_id = sent.message_id
+        self._repository.save_chat_state(chat_id, chat_state)
+
+    @staticmethod
+    def _build_cycle_info_text(report: P2PMonitorCycleReport) -> str:
+        if report.selected_offer is not None:
+            return (
+                "Monitor P2P: se encontro una oferta elegible.\n"
+                f"link: https://www.qvapay.com/p2p-pub/{report.selected_offer.uuid}"
+            )
+        if report.error_message:
+            return f"Monitor P2P: ciclo con error.\n{report.error_message}"
+        return "Monitor P2P: no se encontro una oferta elegible en este ciclo."
+
+    @staticmethod
+    async def _delete_message(bot: Bot, chat_id: int, message_id: int) -> None:
+        from telegram.error import BadRequest, Forbidden, TelegramError
+
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except BadRequest:
+            LOGGER.debug(
+                "Unable to delete previous cycle message chat_id=%s message_id=%s",
+                chat_id,
+                message_id,
+            )
+        except Forbidden:
+            LOGGER.warning(
+                "Missing permission to delete cycle message chat_id=%s message_id=%s",
+                chat_id,
+                message_id,
+            )
+        except TelegramError:
+            LOGGER.exception(
+                "Telegram error deleting cycle message chat_id=%s message_id=%s",
+                chat_id,
+                message_id,
+            )
+
     @staticmethod
     async def _send_text(
         bot: Bot, chat_id: int, text: str, *, parse_mode: str | None = None
-    ) -> None:
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+    ) -> Message:
+        return await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
 
     @staticmethod
     async def _send_message_with_keyboard(

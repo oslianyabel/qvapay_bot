@@ -70,3 +70,16 @@ def test_repository_can_find_processed_offer(tmp_path: Path) -> None:
 
     assert found is not None
     assert found.result == OfferProcessResult.LOST_RACE
+
+
+# uv run pytest -s tests/test_p2p_repository.py
+def test_repository_persists_last_cycle_info_message_id(tmp_path: Path) -> None:
+    repository = P2PMonitorStateStore(tmp_path / "p2p_state.json")
+    state = repository.get_chat_state(77)
+    state.last_cycle_info_message_id = 12345
+    repository.save_chat_state(77, state)
+
+    reloaded = P2PMonitorStateStore(tmp_path / "p2p_state.json")
+    restored = reloaded.get_chat_state(77)
+
+    assert restored.last_cycle_info_message_id == 12345
