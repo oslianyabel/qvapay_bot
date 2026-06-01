@@ -158,8 +158,14 @@ def format_offer_evaluation(evaluation: OfferEvaluation, result: str = "") -> st
     """Formatea el estado de una oferta individual tras ser evaluada."""
     offer = evaluation.offer
     offer_type_label = "compra" if offer.offer_type == P2POfferType.BUY else "venta"
-    status_text = result if result else (
-        "✅ elegible" if evaluation.is_eligible else f"❌ descartada: {', '.join(evaluation.reasons) or 'motivo desconocido'}"
+    status_text = (
+        result
+        if result
+        else (
+            "✅ elegible"
+            if evaluation.is_eligible
+            else f"❌ descartada: {', '.join(evaluation.reasons) or 'motivo desconocido'}"
+        )
     )
     url = f"{QVAPAY_P2P_URL}{offer.uuid}"
     lines = [
@@ -180,12 +186,48 @@ def format_cycle_report(report: P2PMonitorCycleReport) -> str:
         f"ofertas_filtradas: {report.filtered_count}",
         f"ofertas_descartadas: {report.discarded_count}",
     ]
+    if report.applied_rules is not None:
+        rules = report.applied_rules
+        rule_lines: list[str] = []
+        if rules.coin:
+            rule_lines.append(f"  moneda: {rules.coin}")
+        if rules.min_ratio is not None:
+            rule_lines.append(f"  ratio_min: {rules.min_ratio}")
+        if rules.max_ratio is not None:
+            rule_lines.append(f"  ratio_max: {rules.max_ratio}")
+        if rules.min_amount is not None:
+            rule_lines.append(f"  monto_min: {rules.min_amount}")
+        if rules.max_amount is not None:
+            rule_lines.append(f"  monto_max: {rules.max_amount}")
+        if rules.only_kyc:
+            rule_lines.append("  solo_kyc: sí")
+        if rules.only_vip:
+            rule_lines.append("  solo_vip: sí")
+        if rule_lines:
+            lines.extend(["", "reglas_aplicadas:"] + rule_lines)
+        else:
+            lines.extend(["", "reglas_aplicadas: ninguna"])
     if report.top_discarded_reasons:
         lines.extend(
             [
                 "",
                 "razones_descarte:",
                 *report.top_discarded_reasons,
+            ]
+        )
+    if report.selected_offer is not None:
+        offer = report.selected_offer
+        advertiser = offer.advertiser.username or offer.advertiser.uuid or "desconocido"
+        lines.extend(
+            [
+                "",
+                "oferta_seleccionada:",
+                f"  uuid: {offer.uuid}",
+                f"  moneda: {offer.coin}",
+                f"  monto: {offer.amount}",
+                f"  recibe: {offer.receive}",
+                f"  ratio: {offer.ratio}",
+                f"  anunciante: {advertiser}",
             ]
         )
     if report.final_entry is not None:

@@ -116,6 +116,8 @@ class P2PMonitorCycleReport:
     error_message: str | None = None
     rate_limited: bool = False
     next_sleep_seconds: float | None = None
+    applied_rules: P2PMonitorRules | None = None
+    selected_offer: P2POfferSnapshot | None = None
 
 
 def utcnow_iso() -> str:

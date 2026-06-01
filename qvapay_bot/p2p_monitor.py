@@ -13,7 +13,10 @@ from qvapay_bot.p2p_filters import (
     sort_eligible_offers,
     summarize_discarded_reasons,
 )
-from qvapay_bot.p2p_formatter import format_offer_notification, format_offer_found_message
+from qvapay_bot.p2p_formatter import (
+    format_offer_found_message,
+    format_offer_notification,
+)
 from qvapay_bot.p2p_models import (
     MAX_HISTORY_ITEMS,
     MIN_P2P_POLL_INTERVAL_SECONDS,
@@ -114,6 +117,7 @@ class P2PMonitorManager:
     ) -> P2PMonitorCycleReport:
         report = P2PMonitorCycleReport()
         chat_state = self._repository.get_chat_state(chat_id)
+        report.applied_rules = chat_state.rules
         if not force and not chat_state.enabled:
             report.error_message = "P2P monitor is disabled for this chat."
             return report
@@ -234,6 +238,7 @@ class P2PMonitorManager:
             return report
 
         selected_offer = sorted_candidates[0]
+        report.selected_offer = selected_offer
         LOGGER.info(
             "Selected P2P offer chat_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s advertiser=%s",
             chat_id,
@@ -607,7 +612,10 @@ class P2PMonitorManager:
         logged_in_as = auth_state.logged_in_as
         if logged_in_as == "carlitos" and self._settings.carlitos_id is not None:
             return self._settings.carlitos_id
-        if logged_in_as == "osliani" and self._settings.telegram_dev_chat_id is not None:
+        if (
+            logged_in_as == "osliani"
+            and self._settings.telegram_dev_chat_id is not None
+        ):
             return self._settings.telegram_dev_chat_id
         return chat_id
 
