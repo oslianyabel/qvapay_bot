@@ -60,23 +60,39 @@ class P2PMonitorManager:
         self._qvapay_client = qvapay_client
         self._recent_apply_attempts: deque[float] = deque()
         self._apply_lock = asyncio.Lock()
+        self._fallback_tasks: dict[int, asyncio.Task[None]] = {}
 
-    async def restore_jobs(self, job_queue: JobQueue | None) -> None:  # type: ignore[type-arg]
-        if job_queue is None:
-            return
+    async def restore_jobs(
+        self,
+        job_queue: JobQueue | None,  # type: ignore[type-arg]
+        bot: Bot | None = None,
+    ) -> None:
         restored = 0
         for chat_id, auth_state in self._state_store.iter_chat_states():
             chat_state = self._repository.get_chat_state(chat_id)
             if chat_state.enabled and auth_state.has_bearer:
-                self._schedule_job(chat_id, chat_state.poll_interval_seconds, job_queue)
-                restored += 1
-        LOGGER.info("P2P monitor jobs restored count=%s", restored)
+                if job_queue is not None:
+                    self._schedule_job(
+                        chat_id,
+                        chat_state.poll_interval_seconds,
+                        job_queue,
+                    )
+                    restored += 1
+                elif bot is not None:
+                    self._start_fallback_task(chat_id, bot)
+                    restored += 1
+        LOGGER.info(
+            "P2P monitor schedules restored count=%s mode=%s",
+            restored,
+            "job_queue" if job_queue is not None else "asyncio_fallback",
+        )
 
     async def restart_chat(
         self,
         chat_id: int,
         auth_state: ChatAuthState,
         job_queue: JobQueue | None,  # type: ignore[type-arg]
+        bot: Bot | None = None,
     ) -> None:
         await self.stop_chat(chat_id, job_queue)
         chat_state = self._repository.get_chat_state(chat_id)
@@ -87,15 +103,29 @@ class P2PMonitorManager:
                 chat_state.poll_interval_seconds,
             )
             self._schedule_job(chat_id, chat_state.poll_interval_seconds, job_queue)
+        elif chat_state.enabled and auth_state.has_bearer and bot is not None:
+            LOGGER.info(
+                "Starting fallback P2P monitor task chat_id=%s interval_seconds=%s",
+                chat_id,
+                chat_state.poll_interval_seconds,
+            )
+            self._start_fallback_task(chat_id, bot)
         else:
             LOGGER.info(
-                "P2P monitor job not started chat_id=%s enabled=%s has_bearer=%s",
+                "P2P monitor schedule not started chat_id=%s enabled=%s has_bearer=%s has_job_queue=%s has_bot=%s",
                 chat_id,
                 chat_state.enabled,
                 auth_state.has_bearer,
+                job_queue is not None,
+                bot is not None,
             )
 
     async def stop_chat(self, chat_id: int, job_queue: JobQueue | None) -> None:  # type: ignore[type-arg]
+        fallback_task = self._fallback_tasks.pop(chat_id, None)
+        if fallback_task is not None:
+            fallback_task.cancel()
+            LOGGER.info("Stopped fallback P2P monitor task chat_id=%s", chat_id)
+
         if job_queue is None:
             return
         name = _job_name(chat_id)
@@ -338,6 +368,63 @@ class P2PMonitorManager:
             name=name,
             data={"chat_id": chat_id},
         )
+
+    def _start_fallback_task(self, chat_id: int, bot: Bot) -> None:
+        existing_task = self._fallback_tasks.pop(chat_id, None)
+        if existing_task is not None:
+            existing_task.cancel()
+        self._fallback_tasks[chat_id] = asyncio.create_task(
+            self._fallback_loop(chat_id, bot),
+            name=f"p2p_monitor_fallback_{chat_id}",
+        )
+
+    async def _fallback_loop(self, chat_id: int, bot: Bot) -> None:
+        try:
+            while True:
+                chat_state = self._repository.get_chat_state(chat_id)
+                auth_state = self._state_store.get_chat_state(chat_id)
+                if not chat_state.enabled or not auth_state.has_bearer:
+                    break
+
+                previous_error = chat_state.last_error
+                try:
+                    report = await self.run_cycle_once(
+                        chat_id,
+                        auth_state,
+                        force=False,
+                        notify=True,
+                        bot=bot,
+                    )
+                    await self._upsert_cycle_info_message(
+                        bot,
+                        chat_id,
+                        chat_state,
+                        report,
+                    )
+                    if report.error_message and report.error_message != previous_error:
+                        await self._notify_error(bot, chat_id, report.error_message)
+                except Exception as exc:
+                    error_message = f"Unhandled P2P monitor error: {exc}"
+                    LOGGER.exception(
+                        "Unhandled exception in fallback P2P task chat_id=%s",
+                        chat_id,
+                    )
+                    self._set_error(chat_id, chat_state, error_message)
+                    if error_message != previous_error:
+                        await self._notify_error(bot, chat_id, error_message)
+
+                sleep_seconds = max(
+                    chat_state.poll_interval_seconds,
+                    MIN_P2P_POLL_INTERVAL_SECONDS,
+                )
+                await asyncio.sleep(sleep_seconds)
+        except asyncio.CancelledError:
+            LOGGER.info("Fallback P2P task cancelled chat_id=%s", chat_id)
+            raise
+        finally:
+            task = self._fallback_tasks.get(chat_id)
+            if task is asyncio.current_task():
+                self._fallback_tasks.pop(chat_id, None)
 
     async def _job_callback(self, context: Any) -> None:
         job = context.job

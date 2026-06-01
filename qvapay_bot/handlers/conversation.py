@@ -288,7 +288,12 @@ async def _execute_rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         validate_monitor_rules(monitor_state.rules)
         p2p_repository.save_chat_state(chat_id, monitor_state)
-        await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
+        await p2p_monitor_manager.restart_chat(
+            chat_id,
+            auth_state,
+            context.job_queue,
+            context.bot,
+        )
         await reply_text(update, format_rule_change(rule_name, monitor_state))
     except ValueError as exc:
         await reply_text(update, str(exc))
@@ -474,7 +479,9 @@ async def _execute_api(
     # Handle login 2FA
     if spec.command == "login" and response.status_code == 202:
         has_otp = isinstance(response.body, dict) and bool(response.body.get("has_otp"))
-        notified = isinstance(response.body, dict) and bool(response.body.get("notified"))
+        notified = isinstance(response.body, dict) and bool(
+            response.body.get("notified")
+        )
         if has_otp:
             prompt_2fa = (
                 "🔐 Se requiere verificación en dos pasos.\n"
@@ -572,7 +579,12 @@ async def _persist_auth_side_effects(
         if isinstance(login_user, str) and login_user.strip():
             auth_state.logged_in_as = login_user.strip()
         state_store.save_chat_state(chat_id, auth_state)
-        await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
+        await p2p_monitor_manager.restart_chat(
+            chat_id,
+            auth_state,
+            context.job_queue,
+            context.bot,
+        )
         return
 
     if command_name == "profile" and isinstance(body, dict):

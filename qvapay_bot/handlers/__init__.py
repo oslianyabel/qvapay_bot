@@ -48,7 +48,7 @@ LOGGER = logging.getLogger(__name__)
 
 async def _post_init(app: Application) -> None:  # type: ignore[type-arg]
     manager: P2PMonitorManager = app.bot_data["p2p_monitor_manager"]
-    await manager.restore_jobs(app.job_queue)
+    await manager.restore_jobs(app.job_queue, app.bot)
     LOGGER.info("post_init complete — monitor jobs restored")
 
 

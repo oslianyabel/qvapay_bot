@@ -167,5 +167,10 @@ async def monitor_on_confirm_callback(
         monitor_state.enabled = True
         monitor_state.poll_interval_seconds = poll_interval
         p2p_repository.save_chat_state(chat_id, monitor_state)
-        await p2p_monitor_manager.restart_chat(chat_id, auth_state, context.job_queue)
+        await p2p_monitor_manager.restart_chat(
+            chat_id,
+            auth_state,
+            context.job_queue,
+            context.bot,
+        )
         await reply_text(update, "monitor activado")
