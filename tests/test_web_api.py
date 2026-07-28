@@ -39,7 +39,8 @@ class FakeQvaPayClient:
                     "username": "tester",
                     "kyc": True,
                     "p2p_enabled": True,
-                    "balance": 42.5,
+                    # QvaPay devuelve balance como string; debe coercionarse a float.
+                    "balance": "42.50",
                 },
             )
         if command == "average":

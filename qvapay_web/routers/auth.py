@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response, status
 
+from qvapay_bot.p2p_models import to_optional_float
 from qvapay_bot.qvapay_client import COMMAND_INDEX
 from qvapay_bot.state import ChatAuthState
 from qvapay_web.deps import (
@@ -115,13 +116,12 @@ async def login(
         max_age=settings.jwt_expire_minutes * 60,
     )
 
-    balance = profile.get("balance")
     return {
         "uuid": user_id,
         "username": stored.username,
         "kyc": stored.kyc,
         "p2p_enabled": stored.p2p_enabled,
-        "balance": float(balance) if isinstance(balance, (int, float)) else None,
+        "balance": to_optional_float(profile.get("balance")),
     }
 
 

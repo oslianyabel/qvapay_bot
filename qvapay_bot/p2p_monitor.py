@@ -24,6 +24,7 @@ from qvapay_bot.p2p_models import (
     P2POfferSnapshot,
     P2POfferType,
     offer_history_from_offer,
+    to_optional_float,
     trim_history,
     utcnow_iso,
 )
@@ -240,6 +241,13 @@ class P2PMonitorManager:
             report.rate_limited = True
             report.error_message = "QvaPay rate limit reached while reading P2P offers."
             report.next_sleep_seconds = self._build_backoff_seconds(monitor)
+            self._set_error(user_id, monitor, report.error_message)
+            return report
+        if response.status_code in (401, 403):
+            report.error_message = (
+                "Sesión de QvaPay expirada o sin permiso. Cierra sesión y vuelve a "
+                "iniciar sesión para renovar el acceso."
+            )
             self._set_error(user_id, monitor, report.error_message)
             return report
         if response.status_code >= 400:
@@ -560,9 +568,7 @@ class P2PMonitorManager:
             auth_state,
         )
         if response.status_code == 200 and isinstance(response.body, dict):
-            balance = response.body.get("balance")
-            if isinstance(balance, (int, float)):
-                return float(balance)
+            return to_optional_float(response.body.get("balance"))
         return None
 
     def _build_list_arguments(self, monitor: P2PMonitorChatState) -> dict[str, Any]:

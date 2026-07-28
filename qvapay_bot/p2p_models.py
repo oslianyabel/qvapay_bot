@@ -170,6 +170,21 @@ def trim_history(entries: list[OfferHistoryEntry]) -> list[OfferHistoryEntry]:
     return entries[:MAX_HISTORY_ITEMS]
 
 
+def to_optional_float(value: Any) -> float | None:
+    """Convierte a float valores numéricos o numéricos-como-string (QvaPay suele
+    devolver campos como `balance` en forma de string)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
 def normalize_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value

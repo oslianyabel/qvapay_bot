@@ -179,6 +179,20 @@ h2 {
   gap: 0.75rem;
 }
 
+.hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 36px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+
 .content {
   max-width: 1120px;
   margin: 0 auto;
@@ -829,6 +843,34 @@ input::placeholder {
   }
   .brand {
     font-size: 0.98rem;
+  }
+
+  /* Menú hamburguesa: nav y usuario se colapsan bajo un botón */
+  .hamburger {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .nav,
+  .user {
+    display: none;
+    flex-basis: 100%;
+    width: 100%;
+  }
+  .nav.open {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    overflow: visible;
+  }
+  .nav.open a {
+    padding: 0.65rem 0.8rem;
+  }
+  .user.open {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border);
   }
   .stat-value {
     font-size: 1.3rem;
