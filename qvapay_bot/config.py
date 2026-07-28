@@ -9,7 +9,10 @@ DEFAULT_BASE_URL = "https://api.qvapay.com"
 DEFAULT_HTTP_TIMEOUT = 30.0
 DEFAULT_STATE_FILE = Path("data/bot_state.json")
 DEFAULT_P2P_STATE_FILE = Path("data/p2p_monitor_state.json")
-DEFAULT_ALLOWED_CHAT_IDS: frozenset[int] = frozenset({6595595136, 1138837437})
+DEFAULT_JWT_EXPIRE_MINUTES = 60 * 24 * 7  # 7 días
+DEFAULT_WEB_HOST = "127.0.0.1"
+DEFAULT_WEB_PORT = 8000
+DEFAULT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 
 
 def _load_dotenv(dotenv_path: Path) -> None:
@@ -29,34 +32,20 @@ def _load_dotenv(dotenv_path: Path) -> None:
 
 @dataclass(slots=True, frozen=True)
 class Settings:
-    telegram_bot_token: str
-    telegram_dev_chat_id: int | None
-    carlitos_id: int | None
     qvapay_base_url: str
     http_timeout_seconds: float
     state_file: Path
     p2p_state_file: Path
-    allowed_chat_ids: frozenset[int]
-    qvapay_email: str
-    qvapay_password: str
-    qvapay_email2: str
-    qvapay_password2: str
+    jwt_secret: str
+    jwt_expire_minutes: int
+    cors_origins: tuple[str, ...]
+    web_host: str
+    web_port: int
+    cookie_secure: bool
 
     @classmethod
     def from_env(cls) -> Self:
         _load_dotenv(Path(".env"))
-
-        telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-        if not telegram_bot_token:
-            raise ValueError("TELEGRAM_BOT_TOKEN is required")
-
-        raw_telegram_dev_chat_id = os.getenv("TELEGRAM_DEV_CHAT_ID", "").strip()
-        telegram_dev_chat_id = (
-            int(raw_telegram_dev_chat_id) if raw_telegram_dev_chat_id else None
-        )
-
-        raw_carlitos_id = os.getenv("CARLITOS_ID", "").strip()
-        carlitos_id = int(raw_carlitos_id) if raw_carlitos_id else None
 
         qvapay_base_url = os.getenv("QVAPAY_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
         http_timeout_seconds = float(
@@ -67,32 +56,40 @@ class Settings:
             os.getenv("BOT_P2P_STATE_FILE", str(DEFAULT_P2P_STATE_FILE))
         )
 
-        raw_allowed = os.getenv("ALLOWED_CHAT_IDS", "").strip()
-        if raw_allowed:
-            allowed_chat_ids: frozenset[int] = frozenset(
-                int(part.strip())
-                for part in raw_allowed.split(",")
-                if part.strip().lstrip("-").isdigit()
+        jwt_secret = os.getenv("JWT_SECRET", "").strip()
+        if not jwt_secret:
+            raise ValueError("JWT_SECRET is required")
+
+        jwt_expire_minutes = int(
+            os.getenv("JWT_EXPIRE_MINUTES", str(DEFAULT_JWT_EXPIRE_MINUTES))
+        )
+
+        raw_cors = os.getenv("CORS_ORIGINS", "").strip()
+        if raw_cors:
+            cors_origins = tuple(
+                part.strip() for part in raw_cors.split(",") if part.strip()
             )
         else:
-            allowed_chat_ids = DEFAULT_ALLOWED_CHAT_IDS
+            cors_origins = DEFAULT_CORS_ORIGINS
 
-        qvapay_email = os.getenv("EMAIL", "").strip()
-        qvapay_password = os.getenv("PASSWORD", "").strip()
-        qvapay_email2 = os.getenv("EMAIL2", "").strip()
-        qvapay_password2 = os.getenv("PASSWORD2", "").strip()
+        web_host = os.getenv("WEB_HOST", DEFAULT_WEB_HOST).strip() or DEFAULT_WEB_HOST
+        web_port = int(os.getenv("WEB_PORT", str(DEFAULT_WEB_PORT)))
+        cookie_secure = os.getenv("COOKIE_SECURE", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         return cls(
-            telegram_bot_token=telegram_bot_token,
-            telegram_dev_chat_id=telegram_dev_chat_id,
-            carlitos_id=carlitos_id,
             qvapay_base_url=qvapay_base_url,
             http_timeout_seconds=http_timeout_seconds,
             state_file=state_file,
             p2p_state_file=p2p_state_file,
-            allowed_chat_ids=allowed_chat_ids,
-            qvapay_email=qvapay_email,
-            qvapay_password=qvapay_password,
-            qvapay_email2=qvapay_email2,
-            qvapay_password2=qvapay_password2,
+            jwt_secret=jwt_secret,
+            jwt_expire_minutes=jwt_expire_minutes,
+            cors_origins=cors_origins,
+            web_host=web_host,
+            web_port=web_port,
+            cookie_secure=cookie_secure,
         )

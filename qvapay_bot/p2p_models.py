@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
@@ -88,6 +88,8 @@ class OfferHistoryEntry:
 
 @dataclass(slots=True)
 class P2PMonitorChatState:
+    id: str = ""
+    name: str = ""
     enabled: bool = False
     poll_interval_seconds: int = DEFAULT_P2P_POLL_INTERVAL_SECONDS
     target_type: P2POfferType = P2POfferType.ANY
@@ -103,7 +105,6 @@ class P2PMonitorChatState:
     last_error: str | None = None
     last_error_at: str | None = None
     last_success_at: str | None = None
-    last_cycle_info_message_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -122,7 +123,9 @@ class P2PMonitorCycleReport:
 
 
 def utcnow_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return (
+        datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None).isoformat() + "Z"
+    )
 
 
 def parse_iso_datetime(value: str | None) -> datetime | None:

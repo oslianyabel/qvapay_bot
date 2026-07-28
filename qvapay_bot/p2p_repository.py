@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -16,60 +17,134 @@ from qvapay_bot.p2p_models import (
 )
 
 
+def _new_monitor_id() -> str:
+    return uuid.uuid4().hex
+
+
 class P2PMonitorStateStore:
+    """Persistencia de monitores P2P.
+
+    Estructura en disco (v2):
+        {"version": 2, "users": {user_id: {"monitors": {monitor_id: {...}}}}}
+
+    Cada usuario puede tener varios monitores independientes.
+    """
+
     def __init__(self, file_path: Path) -> None:
         self._file_path = file_path
-        self._chats: dict[str, P2PMonitorChatState] = {}
+        self._users: dict[str, dict[str, P2PMonitorChatState]] = {}
         self._load()
 
-    def get_chat_state(self, chat_id: int) -> P2PMonitorChatState:
-        key = str(chat_id)
-        if key not in self._chats:
-            self._chats[key] = P2PMonitorChatState()
-        return self._chats[key]
+    # -- Reads ---------------------------------------------------------------
 
-    def save_chat_state(self, chat_id: int, state: P2PMonitorChatState) -> None:
-        self._chats[str(chat_id)] = state
-        self._save()
+    def list_monitors(self, user_id: str) -> list[P2PMonitorChatState]:
+        return list(self._users.get(str(user_id), {}).values())
 
-    def list_enabled_chat_ids(self) -> list[int]:
-        return [int(chat_id) for chat_id, state in self._chats.items() if state.enabled]
+    def get_monitor(
+        self, user_id: str, monitor_id: str
+    ) -> P2PMonitorChatState | None:
+        return self._users.get(str(user_id), {}).get(monitor_id)
+
+    def iter_all_enabled(self) -> list[tuple[str, P2PMonitorChatState]]:
+        result: list[tuple[str, P2PMonitorChatState]] = []
+        for user_id, monitors in self._users.items():
+            for monitor in monitors.values():
+                if monitor.enabled:
+                    result.append((user_id, monitor))
+        return result
 
     def find_history_entry(
-        self, chat_id: int, offer_uuid: str
+        self, user_id: str, monitor_id: str, offer_uuid: str
     ) -> OfferHistoryEntry | None:
-        state = self.get_chat_state(chat_id)
+        monitor = self.get_monitor(user_id, monitor_id)
+        if monitor is None:
+            return None
         for collection in (
-            state.applied_history,
-            state.lost_race_history,
-            state.notified_history,
-            state.filtered_history,
-            state.discarded_history,
+            monitor.applied_history,
+            monitor.lost_race_history,
+            monitor.notified_history,
+            monitor.filtered_history,
+            monitor.discarded_history,
         ):
             for entry in collection:
                 if entry.uuid == offer_uuid:
                     return entry
         return None
 
+    # -- Writes --------------------------------------------------------------
+
+    def create_monitor(self, user_id: str, name: str) -> P2PMonitorChatState:
+        monitor = P2PMonitorChatState(id=_new_monitor_id(), name=name.strip() or "Monitor")
+        self._users.setdefault(str(user_id), {})[monitor.id] = monitor
+        self._save()
+        return monitor
+
+    def save_monitor(self, user_id: str, monitor: P2PMonitorChatState) -> None:
+        if not monitor.id:
+            monitor.id = _new_monitor_id()
+        self._users.setdefault(str(user_id), {})[monitor.id] = monitor
+        self._save()
+
+    def delete_monitor(self, user_id: str, monitor_id: str) -> bool:
+        monitors = self._users.get(str(user_id))
+        if not monitors or monitor_id not in monitors:
+            return False
+        del monitors[monitor_id]
+        if not monitors:
+            self._users.pop(str(user_id), None)
+        self._save()
+        return True
+
+    # -- Persistence ---------------------------------------------------------
+
     def _load(self) -> None:
         if not self._file_path.exists():
             return
 
         raw_payload = json.loads(self._file_path.read_text(encoding="utf-8"))
+        version = raw_payload.get("version")
+
+        if version == 2 and isinstance(raw_payload.get("users"), dict):
+            for user_id, user_blob in raw_payload["users"].items():
+                if not isinstance(user_id, str) or not isinstance(user_blob, dict):
+                    continue
+                monitors_raw = user_blob.get("monitors", {})
+                if not isinstance(monitors_raw, dict):
+                    continue
+                monitors: dict[str, P2PMonitorChatState] = {}
+                for monitor_id, value in monitors_raw.items():
+                    if not isinstance(monitor_id, str) or not isinstance(value, dict):
+                        continue
+                    monitor = _monitor_from_dict(value)
+                    monitor.id = monitor.id or monitor_id
+                    monitors[monitor.id] = monitor
+                self._users[user_id] = monitors
+            return
+
+        # Migración desde v1: {"version":1, "chats": {user_id: {monitor fields}}}
         chats = raw_payload.get("chats", {})
-        self._chats = {
-            chat_id: _chat_state_from_dict(value)
-            for chat_id, value in chats.items()
-            if isinstance(chat_id, str) and isinstance(value, dict)
-        }
+        if isinstance(chats, dict):
+            for user_id, value in chats.items():
+                if not isinstance(user_id, str) or not isinstance(value, dict):
+                    continue
+                monitor = _monitor_from_dict(value)
+                monitor.id = monitor.id or _new_monitor_id()
+                monitor.name = monitor.name or "Principal"
+                self._users[user_id] = {monitor.id: monitor}
+            self._save()
 
     def _save(self) -> None:
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 1,
-            "chats": {
-                chat_id: _chat_state_to_dict(state)
-                for chat_id, state in self._chats.items()
+            "version": 2,
+            "users": {
+                user_id: {
+                    "monitors": {
+                        monitor_id: _monitor_to_dict(monitor)
+                        for monitor_id, monitor in monitors.items()
+                    }
+                }
+                for user_id, monitors in self._users.items()
             },
         }
         self._file_path.write_text(
@@ -78,7 +153,7 @@ class P2PMonitorStateStore:
         )
 
 
-def _chat_state_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
+def _monitor_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
     raw_rules = raw_state.get("rules")
     rules_raw: dict[str, Any] = raw_rules if isinstance(raw_rules, dict) else {}
     target_type_raw = str(raw_state.get("target_type", P2POfferType.ANY.value))
@@ -88,6 +163,8 @@ def _chat_state_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
         target_type = P2POfferType.ANY
 
     return P2PMonitorChatState(
+        id=_coerce_optional_str(raw_state.get("id")) or "",
+        name=_coerce_optional_str(raw_state.get("name")) or "",
         enabled=bool(raw_state.get("enabled", False)),
         poll_interval_seconds=_coerce_int(
             raw_state.get("poll_interval_seconds"),
@@ -120,14 +197,13 @@ def _chat_state_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
         last_error=_coerce_optional_str(raw_state.get("last_error")),
         last_error_at=_coerce_optional_str(raw_state.get("last_error_at")),
         last_success_at=_coerce_optional_str(raw_state.get("last_success_at")),
-        last_cycle_info_message_id=_coerce_optional_int(
-            raw_state.get("last_cycle_info_message_id")
-        ),
     )
 
 
-def _chat_state_to_dict(state: P2PMonitorChatState) -> dict[str, Any]:
+def _monitor_to_dict(state: P2PMonitorChatState) -> dict[str, Any]:
     return {
+        "id": state.id,
+        "name": state.name,
         "enabled": state.enabled,
         "poll_interval_seconds": state.poll_interval_seconds,
         "target_type": state.target_type.value,
@@ -166,7 +242,6 @@ def _chat_state_to_dict(state: P2PMonitorChatState) -> dict[str, Any]:
         "last_error": state.last_error,
         "last_error_at": state.last_error_at,
         "last_success_at": state.last_success_at,
-        "last_cycle_info_message_id": state.last_cycle_info_message_id,
     }
 
 
@@ -249,14 +324,6 @@ def _coerce_int(value: Any, default: int) -> int:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return default
-
-
-def _coerce_optional_int(value: Any) -> int | None:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return None
 
 
 def _coerce_str_list(value: Any) -> list[str]:

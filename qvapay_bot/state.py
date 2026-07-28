@@ -41,26 +41,22 @@ class BotStateStore:
         self._chats: dict[str, ChatAuthState] = {}
         self._load()
 
-    def get_chat_state(self, chat_id: int) -> ChatAuthState:
-        key = str(chat_id)
+    def get_chat_state(self, user_id: str) -> ChatAuthState:
+        key = str(user_id)
         if key not in self._chats:
             self._chats[key] = ChatAuthState()
         return self._chats[key]
 
-    def save_chat_state(self, chat_id: int, state: ChatAuthState) -> None:
-        self._chats[str(chat_id)] = state
+    def save_chat_state(self, user_id: str, state: ChatAuthState) -> None:
+        self._chats[str(user_id)] = state
         self._save()
 
-    def clear_chat_state(self, chat_id: int) -> None:
-        self._chats[str(chat_id)] = ChatAuthState()
+    def clear_chat_state(self, user_id: str) -> None:
+        self._chats[str(user_id)] = ChatAuthState()
         self._save()
 
-    def iter_chat_states(self) -> list[tuple[int, ChatAuthState]]:
-        return [
-            (int(chat_id), state)
-            for chat_id, state in self._chats.items()
-            if chat_id.isdigit()
-        ]
+    def iter_chat_states(self) -> list[tuple[str, ChatAuthState]]:
+        return [(user_id, state) for user_id, state in self._chats.items()]
 
     def _load(self) -> None:
         if not self._file_path.exists():

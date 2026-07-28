@@ -4,23 +4,20 @@ import asyncio
 import logging
 import random
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from qvapay_bot.config import Settings
+from qvapay_bot.notifier import EventType, MonitorEvent, MonitorNotifier
 from qvapay_bot.p2p_filters import (
     build_offer_snapshot,
     evaluate_offer,
     sort_eligible_offers,
     summarize_discarded_reasons,
 )
-from qvapay_bot.p2p_formatter import (
-    format_offer_found_message,
-    format_offer_notification,
-)
 from qvapay_bot.p2p_models import (
     MAX_HISTORY_ITEMS,
     MIN_P2P_POLL_INTERVAL_SECONDS,
     OfferEvaluation,
+    OfferHistoryEntry,
     OfferProcessResult,
     P2PMonitorChatState,
     P2PMonitorCycleReport,
@@ -32,157 +29,224 @@ from qvapay_bot.p2p_models import (
 )
 from qvapay_bot.p2p_repository import P2PMonitorStateStore
 from qvapay_bot.qvapay_client import COMMAND_INDEX, QvaPayClient
+from qvapay_bot.serialization import (
+    cycle_report_to_dict,
+    history_entry_to_dict,
+    offer_snapshot_to_dict,
+)
 from qvapay_bot.state import BotStateStore, ChatAuthState
 
-if TYPE_CHECKING:
-    from telegram import Bot, Message
-    from telegram.ext import JobQueue
-
 LOGGER = logging.getLogger(__name__)
+ERROR_NOTIFICATION_COOLDOWN_SECONDS = 300.0
 
 
-def _job_name(chat_id: int) -> str:
-    return f"p2p_monitor_{chat_id}"
+def _task_key(user_id: str, monitor_id: str) -> str:
+    return f"{user_id}::{monitor_id}"
 
 
 class P2PMonitorManager:
+    """Orquesta el monitoreo P2P por monitor.
+
+    Cada monitor habilitado (un usuario puede tener varios) corre en su propia tarea
+    asyncio (`_monitor_loop`). Los efectos hacia la UI se emiten como `MonitorEvent`s
+    a través del `MonitorNotifier` inyectado; cada evento lleva `monitor_id`/`monitor_name`
+    para que el frontend pueda enrutarlos. El stream SSE sigue siendo por usuario.
+    """
+
     def __init__(
         self,
         *,
-        settings: Settings,
         state_store: BotStateStore,
         repository: P2PMonitorStateStore,
         qvapay_client: QvaPayClient,
+        notifier: MonitorNotifier,
     ) -> None:
-        self._settings = settings
         self._state_store = state_store
         self._repository = repository
         self._qvapay_client = qvapay_client
+        self._notifier = notifier
         self._recent_apply_attempts: deque[float] = deque()
         self._apply_lock = asyncio.Lock()
-        self._fallback_tasks: dict[int, asyncio.Task[None]] = {}
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._last_error_notification_at: dict[tuple[str, str], float] = {}
 
-    async def restore_jobs(
-        self,
-        job_queue: JobQueue | None,  # type: ignore[type-arg]
-        bot: Bot | None = None,
-    ) -> None:
+    # -- Lifecycle -----------------------------------------------------------
+
+    async def restore_tasks(self) -> None:
         restored = 0
-        for chat_id, auth_state in self._state_store.iter_chat_states():
-            chat_state = self._repository.get_chat_state(chat_id)
-            if chat_state.enabled and auth_state.has_bearer:
-                if job_queue is not None:
-                    self._schedule_job(
-                        chat_id,
-                        chat_state.poll_interval_seconds,
-                        job_queue,
-                    )
-                    restored += 1
-                elif bot is not None:
-                    self._start_fallback_task(chat_id, bot)
-                    restored += 1
-        LOGGER.info(
-            "P2P monitor schedules restored count=%s mode=%s",
-            restored,
-            "job_queue" if job_queue is not None else "asyncio_fallback",
-        )
+        for user_id, monitor in self._repository.iter_all_enabled():
+            auth_state = self._state_store.get_chat_state(user_id)
+            if auth_state.has_bearer:
+                self._start_monitor_task(user_id, monitor.id)
+                restored += 1
+        LOGGER.info("P2P monitor tasks restored count=%s", restored)
 
-    async def restart_chat(
-        self,
-        chat_id: int,
-        auth_state: ChatAuthState,
-        job_queue: JobQueue | None,  # type: ignore[type-arg]
-        bot: Bot | None = None,
-    ) -> None:
-        await self.stop_chat(chat_id, job_queue)
-        chat_state = self._repository.get_chat_state(chat_id)
-        if chat_state.enabled and auth_state.has_bearer and job_queue is not None:
+    async def restart_monitor(self, user_id: str, monitor_id: str) -> None:
+        await self.stop_monitor(user_id, monitor_id)
+        monitor = self._repository.get_monitor(user_id, monitor_id)
+        auth_state = self._state_store.get_chat_state(user_id)
+        if monitor is not None and monitor.enabled and auth_state.has_bearer:
             LOGGER.info(
-                "Starting P2P monitor job chat_id=%s interval_seconds=%s",
-                chat_id,
-                chat_state.poll_interval_seconds,
+                "Starting P2P monitor task user_id=%s monitor_id=%s interval=%s",
+                user_id,
+                monitor_id,
+                monitor.poll_interval_seconds,
             )
-            self._schedule_job(chat_id, chat_state.poll_interval_seconds, job_queue)
-        elif chat_state.enabled and auth_state.has_bearer and bot is not None:
-            LOGGER.info(
-                "Starting fallback P2P monitor task chat_id=%s interval_seconds=%s",
-                chat_id,
-                chat_state.poll_interval_seconds,
-            )
-            self._start_fallback_task(chat_id, bot)
+            self._start_monitor_task(user_id, monitor_id)
         else:
             LOGGER.info(
-                "P2P monitor schedule not started chat_id=%s enabled=%s has_bearer=%s has_job_queue=%s has_bot=%s",
-                chat_id,
-                chat_state.enabled,
+                "P2P monitor task not started user_id=%s monitor_id=%s enabled=%s has_bearer=%s",
+                user_id,
+                monitor_id,
+                monitor.enabled if monitor else None,
                 auth_state.has_bearer,
-                job_queue is not None,
-                bot is not None,
             )
 
-    async def stop_chat(self, chat_id: int, job_queue: JobQueue | None) -> None:  # type: ignore[type-arg]
-        fallback_task = self._fallback_tasks.pop(chat_id, None)
-        if fallback_task is not None:
-            fallback_task.cancel()
-            LOGGER.info("Stopped fallback P2P monitor task chat_id=%s", chat_id)
+    async def stop_monitor(self, user_id: str, monitor_id: str) -> None:
+        task = self._tasks.pop(_task_key(user_id, monitor_id), None)
+        if task is not None:
+            task.cancel()
+            LOGGER.info(
+                "Stopped P2P monitor task user_id=%s monitor_id=%s", user_id, monitor_id
+            )
 
-        if job_queue is None:
-            return
-        name = _job_name(chat_id)
-        jobs = job_queue.get_jobs_by_name(name)
-        for job in jobs:
-            job.schedule_removal()
-        if jobs:
-            LOGGER.info("Stopped P2P monitor job chat_id=%s", chat_id)
+    async def shutdown(self) -> None:
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        self._tasks.clear()
+
+    def is_running(self, user_id: str, monitor_id: str) -> bool:
+        task = self._tasks.get(_task_key(user_id, monitor_id))
+        return task is not None and not task.done()
+
+    # -- Scheduler -----------------------------------------------------------
+
+    def _start_monitor_task(self, user_id: str, monitor_id: str) -> None:
+        key = _task_key(user_id, monitor_id)
+        existing = self._tasks.pop(key, None)
+        if existing is not None:
+            existing.cancel()
+        self._tasks[key] = asyncio.create_task(
+            self._monitor_loop(user_id, monitor_id),
+            name=f"p2p_monitor_{key}",
+        )
+
+    async def _monitor_loop(self, user_id: str, monitor_id: str) -> None:
+        key = _task_key(user_id, monitor_id)
+        try:
+            while True:
+                monitor = self._repository.get_monitor(user_id, monitor_id)
+                auth_state = self._state_store.get_chat_state(user_id)
+                if monitor is None or not monitor.enabled or not auth_state.has_bearer:
+                    break
+
+                try:
+                    report = await self.run_cycle_once(
+                        user_id, monitor_id, auth_state, force=False
+                    )
+                    await self._emit(
+                        user_id,
+                        monitor,
+                        EventType.CYCLE_COMPLETED,
+                        cycle_report_to_dict(report),
+                    )
+                    if report.error_message and self._should_notify_error(
+                        key, report.error_message
+                    ):
+                        await self._emit(
+                            user_id,
+                            monitor,
+                            EventType.ERROR,
+                            {"message": report.error_message},
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    error_message = f"Unhandled P2P monitor error: {exc}"
+                    LOGGER.exception(
+                        "Unhandled exception in P2P monitor loop user_id=%s monitor_id=%s",
+                        user_id,
+                        monitor_id,
+                    )
+                    self._set_error(user_id, monitor, error_message)
+                    if self._should_notify_error(key, error_message):
+                        await self._emit(
+                            user_id, monitor, EventType.ERROR, {"message": error_message}
+                        )
+
+                sleep_seconds = max(
+                    monitor.poll_interval_seconds, MIN_P2P_POLL_INTERVAL_SECONDS
+                )
+                await asyncio.sleep(sleep_seconds)
+        except asyncio.CancelledError:
+            LOGGER.info(
+                "P2P monitor loop cancelled user_id=%s monitor_id=%s",
+                user_id,
+                monitor_id,
+            )
+            raise
+        finally:
+            if self._tasks.get(key) is asyncio.current_task():
+                self._tasks.pop(key, None)
+
+    # -- Cycle ---------------------------------------------------------------
 
     async def run_cycle_once(
         self,
-        chat_id: int,
+        user_id: str,
+        monitor_id: str,
         auth_state: ChatAuthState,
         *,
         force: bool,
-        notify: bool,
         dry_run: bool = False,
-        bot: Bot | None = None,
     ) -> P2PMonitorCycleReport:
         report = P2PMonitorCycleReport()
-        chat_state = self._repository.get_chat_state(chat_id)
-        report.applied_rules = chat_state.rules
-        if not force and not chat_state.enabled:
-            report.error_message = "P2P monitor is disabled for this chat."
+        monitor = self._repository.get_monitor(user_id, monitor_id)
+        if monitor is None:
+            report.error_message = "Monitor not found."
+            return report
+        report.applied_rules = monitor.rules
+        if not force and not monitor.enabled:
+            report.error_message = "P2P monitor is disabled."
             return report
         if not auth_state.has_bearer:
             error_message = "A bearer token is required to monitor P2P offers."
-            self._set_error(chat_id, chat_state, error_message)
+            self._set_error(user_id, monitor, error_message)
             report.error_message = error_message
             return report
 
         LOGGER.info(
-            "Starting P2P monitor cycle chat_id=%s force=%s notify=%s target_type=%s coin=%s",
-            chat_id,
+            "Starting P2P monitor cycle user_id=%s monitor_id=%s force=%s dry_run=%s target_type=%s coin=%s",
+            user_id,
+            monitor_id,
             force,
-            notify,
-            chat_state.target_type.value,
-            chat_state.rules.coin or "any",
+            dry_run,
+            monitor.target_type.value,
+            monitor.rules.coin or "any",
         )
+        await self._emit(user_id, monitor, EventType.CYCLE_STARTED, {"dry_run": dry_run})
 
-        await self._ensure_user_profile(chat_id, auth_state)
+        await self._ensure_user_profile(user_id, auth_state)
         response = await self._qvapay_client.execute(
             COMMAND_INDEX["list_p2p"],
-            self._build_list_arguments(chat_state),
+            self._build_list_arguments(monitor),
             auth_state,
         )
         if response.status_code == 429:
             report.rate_limited = True
             report.error_message = "QvaPay rate limit reached while reading P2P offers."
-            report.next_sleep_seconds = self._build_backoff_seconds(chat_state)
-            self._set_error(chat_id, chat_state, report.error_message)
+            report.next_sleep_seconds = self._build_backoff_seconds(monitor)
+            self._set_error(user_id, monitor, report.error_message)
             return report
         if response.status_code >= 400:
             report.error_message = (
                 f"Unable to read P2P offers. HTTP {response.status_code}."
             )
-            self._set_error(chat_id, chat_state, report.error_message)
+            self._set_error(user_id, monitor, report.error_message)
             return report
 
         offers_raw = None
@@ -190,13 +254,14 @@ class P2PMonitorManager:
             offers_raw = response.body.get("data") or response.body.get("offers")
         if not isinstance(offers_raw, list):
             LOGGER.error(
-                "Invalid /p2p payload chat_id=%s status_code=%s body=%r",
-                chat_id,
+                "Invalid /p2p payload user_id=%s monitor_id=%s status_code=%s body=%r",
+                user_id,
+                monitor_id,
                 response.status_code,
                 response.body,
             )
             report.error_message = "QvaPay returned an invalid payload for /p2p."
-            self._set_error(chat_id, chat_state, report.error_message)
+            self._set_error(user_id, monitor, report.error_message)
             return report
 
         offers = [
@@ -207,10 +272,10 @@ class P2PMonitorManager:
         evaluations = [
             evaluate_offer(
                 offer,
-                chat_state.rules,
-                target_type=chat_state.target_type,
-                current_user_uuid=None,
-                processed_offer_timestamps=chat_state.processed_offer_timestamps,
+                monitor.rules,
+                target_type=monitor.target_type,
+                current_user_uuid=auth_state.user_uuid,
+                processed_offer_timestamps=monitor.processed_offer_timestamps,
             )
             for offer in offers
         ]
@@ -222,37 +287,41 @@ class P2PMonitorManager:
         report.top_discarded_reasons = summarize_discarded_reasons(evaluations)
 
         LOGGER.info(
-            "Fetched P2P offers chat_id=%s read=%s eligible=%s discarded=%s top_discarded=%s",
-            chat_id,
+            "Fetched P2P offers user_id=%s monitor_id=%s read=%s eligible=%s discarded=%s top_discarded=%s",
+            user_id,
+            monitor_id,
             report.read_count,
             report.filtered_count,
             report.discarded_count,
             ", ".join(report.top_discarded_reasons) or "none",
         )
-        self._log_cycle_evaluations(chat_id, evaluations)
 
         evaluated_at = utcnow_iso()
-        self._remember_cycle_entries(chat_state, evaluations, evaluated_at)
+        self._remember_cycle_entries(monitor, evaluations, evaluated_at)
 
-        sorted_candidates = sort_eligible_offers(evaluations, chat_state.rules)
+        sorted_candidates = sort_eligible_offers(evaluations, monitor.rules)
 
-        if chat_state.target_type == P2POfferType.BUY and sorted_candidates:
+        if monitor.target_type == P2POfferType.BUY and sorted_candidates:
             balance = await self.fetch_balance(auth_state)
             if balance is not None:
                 if balance < 1:
                     LOGGER.info(
-                        "Balance too low to buy chat_id=%s balance=%.2f, stopping monitor",
-                        chat_id,
+                        "Balance too low to buy user_id=%s monitor_id=%s balance=%.2f, stopping monitor",
+                        user_id,
+                        monitor_id,
                         balance,
                     )
-                    chat_state.enabled = False
-                    self._repository.save_chat_state(chat_id, chat_state)
-                    if bot is not None:
-                        await self._send_text(
-                            bot,
-                            chat_id,
-                            f"⚠️ Saldo insuficiente ({balance:.2f} QUSD). Monitoreo detenido.",
-                        )
+                    monitor.enabled = False
+                    self._repository.save_monitor(user_id, monitor)
+                    await self._emit(
+                        user_id, monitor, EventType.BALANCE_LOW, {"balance": balance}
+                    )
+                    await self._emit(
+                        user_id,
+                        monitor,
+                        EventType.MONITOR_STOPPED,
+                        {"reason": "balance_low", "balance": balance},
+                    )
                     report.error_message = "Balance too low."
                     return report
                 sorted_candidates = [
@@ -260,38 +329,37 @@ class P2PMonitorManager:
                 ]
 
         if not sorted_candidates:
-            LOGGER.info("No eligible P2P offers found for chat_id=%s", chat_id)
-            chat_state.last_error = None
-            chat_state.last_error_at = None
-            chat_state.last_success_at = evaluated_at
-            self._repository.save_chat_state(chat_id, chat_state)
+            LOGGER.info(
+                "No eligible P2P offers found user_id=%s monitor_id=%s",
+                user_id,
+                monitor_id,
+            )
+            monitor.last_error = None
+            monitor.last_error_at = None
+            monitor.last_success_at = evaluated_at
+            self._repository.save_monitor(user_id, monitor)
             return report
 
         selected_offer = sorted_candidates[0]
         report.selected_offer = selected_offer
         LOGGER.info(
-            "Selected P2P offer chat_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s advertiser=%s",
-            chat_id,
+            "Selected P2P offer user_id=%s monitor_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s",
+            user_id,
+            monitor_id,
             selected_offer.uuid,
             selected_offer.ratio,
             selected_offer.amount,
             selected_offer.coin,
-            selected_offer.advertiser.username
-            or selected_offer.advertiser.uuid
-            or "unknown",
+        )
+        await self._emit(
+            user_id,
+            monitor,
+            EventType.OFFER_SELECTED,
+            {"offer": offer_snapshot_to_dict(selected_offer), "dry_run": dry_run},
         )
 
-        if bot is not None:
-            notify_chat_id = self._resolve_notify_chat_id(chat_id, auth_state)
-            await self._send_text(
-                bot,
-                notify_chat_id,
-                format_offer_found_message(selected_offer),
-                parse_mode="HTML",
-            )
-
         first_detected_at = self._remember_first_seen(
-            chat_state, selected_offer.uuid, evaluated_at
+            monitor, selected_offer.uuid, evaluated_at
         )
         matched_entry = offer_history_from_offer(
             selected_offer,
@@ -300,181 +368,75 @@ class P2PMonitorManager:
             result=OfferProcessResult.MATCHED,
         )
         report.matched_entry = matched_entry
-        chat_state.notified_history = trim_history(
-            [matched_entry, *chat_state.notified_history]
+        monitor.notified_history = trim_history(
+            [matched_entry, *monitor.notified_history]
         )
 
         if dry_run:
-            chat_state.last_error = None
-            chat_state.last_error_at = None
-            chat_state.last_success_at = evaluated_at
-            self._repository.save_chat_state(chat_id, chat_state)
+            monitor.last_error = None
+            monitor.last_error_at = None
+            monitor.last_success_at = evaluated_at
+            self._repository.save_monitor(user_id, monitor)
             return report
 
         final_entry = await self._attempt_apply(
-            chat_id,
-            chat_state,
+            user_id,
+            monitor,
             auth_state,
             selected_offer,
             evaluated_at,
             first_detected_at,
         )
         report.final_entry = final_entry
-        chat_state.last_error = None
-        chat_state.last_error_at = None
-        chat_state.last_success_at = evaluated_at
-        self._repository.save_chat_state(chat_id, chat_state)
+        monitor.last_error = None
+        monitor.last_error_at = None
+        monitor.last_success_at = evaluated_at
+        self._repository.save_monitor(user_id, monitor)
 
-        if notify and bot is not None:
-            text, keyboard = format_offer_notification(
-                selected_offer,
-                evaluated_at=evaluated_at,
-                result_text=f"{final_entry.result.value}: {final_entry.reason or '-'}",
-                result=final_entry.result,
-            )
-            await self._send_message_with_keyboard(bot, chat_id, text, keyboard)
+        await self._emit(
+            user_id,
+            monitor,
+            EventType.APPLY_RESULT,
+            {"entry": history_entry_to_dict(final_entry)},
+        )
 
         if (
-            chat_state.target_type == P2POfferType.BUY
+            monitor.target_type == P2POfferType.BUY
             and final_entry.result == OfferProcessResult.APPLIED
         ):
             post_balance = await self.fetch_balance(auth_state)
             if post_balance is not None and post_balance < 1:
-                chat_state.enabled = False
-                self._repository.save_chat_state(chat_id, chat_state)
-                if bot is not None:
-                    await self._send_text(
-                        bot,
-                        chat_id,
-                        f"⚠️ Saldo insuficiente ({post_balance:.2f} QUSD). Monitoreo detenido.",
-                    )
+                monitor.enabled = False
+                self._repository.save_monitor(user_id, monitor)
+                await self._emit(
+                    user_id, monitor, EventType.BALANCE_LOW, {"balance": post_balance}
+                )
+                await self._emit(
+                    user_id,
+                    monitor,
+                    EventType.MONITOR_STOPPED,
+                    {"reason": "balance_low", "balance": post_balance},
+                )
 
         return report
 
-    def _schedule_job(
-        self,
-        chat_id: int,
-        interval_seconds: int,
-        job_queue: JobQueue,  # type: ignore[type-arg]
-    ) -> None:
-        name = _job_name(chat_id)
-        # Remove existing jobs for this chat
-        for job in job_queue.get_jobs_by_name(name):
-            job.schedule_removal()
-        job_queue.run_repeating(
-            self._job_callback,
-            interval=max(interval_seconds, MIN_P2P_POLL_INTERVAL_SECONDS),
-            first=1,
-            name=name,
-            data={"chat_id": chat_id},
-        )
-
-    def _start_fallback_task(self, chat_id: int, bot: Bot) -> None:
-        existing_task = self._fallback_tasks.pop(chat_id, None)
-        if existing_task is not None:
-            existing_task.cancel()
-        self._fallback_tasks[chat_id] = asyncio.create_task(
-            self._fallback_loop(chat_id, bot),
-            name=f"p2p_monitor_fallback_{chat_id}",
-        )
-
-    async def _fallback_loop(self, chat_id: int, bot: Bot) -> None:
-        try:
-            while True:
-                chat_state = self._repository.get_chat_state(chat_id)
-                auth_state = self._state_store.get_chat_state(chat_id)
-                if not chat_state.enabled or not auth_state.has_bearer:
-                    break
-
-                previous_error = chat_state.last_error
-                try:
-                    report = await self.run_cycle_once(
-                        chat_id,
-                        auth_state,
-                        force=False,
-                        notify=True,
-                        bot=bot,
-                    )
-                    await self._upsert_cycle_info_message(
-                        bot,
-                        chat_id,
-                        chat_state,
-                        report,
-                    )
-                    if report.error_message and report.error_message != previous_error:
-                        await self._notify_error(bot, chat_id, report.error_message)
-                except Exception as exc:
-                    error_message = f"Unhandled P2P monitor error: {exc}"
-                    LOGGER.exception(
-                        "Unhandled exception in fallback P2P task chat_id=%s",
-                        chat_id,
-                    )
-                    self._set_error(chat_id, chat_state, error_message)
-                    if error_message != previous_error:
-                        await self._notify_error(bot, chat_id, error_message)
-
-                sleep_seconds = max(
-                    chat_state.poll_interval_seconds,
-                    MIN_P2P_POLL_INTERVAL_SECONDS,
-                )
-                await asyncio.sleep(sleep_seconds)
-        except asyncio.CancelledError:
-            LOGGER.info("Fallback P2P task cancelled chat_id=%s", chat_id)
-            raise
-        finally:
-            task = self._fallback_tasks.get(chat_id)
-            if task is asyncio.current_task():
-                self._fallback_tasks.pop(chat_id, None)
-
-    async def _job_callback(self, context: Any) -> None:
-        job = context.job
-        chat_id: int = job.data["chat_id"]
-        bot: Bot = context.bot
-
-        chat_state = self._repository.get_chat_state(chat_id)
-        auth_state = self._state_store.get_chat_state(chat_id)
-        if not chat_state.enabled or not auth_state.has_bearer:
-            job.schedule_removal()
-            return
-
-        previous_error = chat_state.last_error
-        try:
-            report = await self.run_cycle_once(
-                chat_id,
-                auth_state,
-                force=False,
-                notify=True,
-                bot=bot,
-            )
-            await self._upsert_cycle_info_message(bot, chat_id, chat_state, report)
-            if report.error_message and report.error_message != previous_error:
-                await self._notify_error(bot, chat_id, report.error_message)
-        except Exception as exc:
-            error_message = f"Unhandled P2P monitor error: {exc}"
-            LOGGER.exception(
-                "Unhandled exception in P2P job chat_id=%s",
-                chat_id,
-            )
-            self._set_error(chat_id, chat_state, error_message)
-            if error_message != previous_error:
-                await self._notify_error(bot, chat_id, error_message)
-
     async def _attempt_apply(
         self,
-        chat_id: int,
-        chat_state: P2PMonitorChatState,
+        user_id: str,
+        monitor: P2PMonitorChatState,
         auth_state: ChatAuthState,
         offer: P2POfferSnapshot,
         evaluated_at: str,
         first_detected_at: str,
-    ) -> Any:
+    ) -> OfferHistoryEntry:
         applied_at = utcnow_iso()
         async with self._apply_lock:
             self._prune_apply_window()
             if len(self._recent_apply_attempts) >= 2:
                 LOGGER.info(
-                    "Skipping P2P apply due to local throttle chat_id=%s uuid=%s",
-                    chat_id,
+                    "Skipping P2P apply due to local throttle user_id=%s monitor_id=%s uuid=%s",
+                    user_id,
+                    monitor.id,
                     offer.uuid,
                 )
                 entry = offer_history_from_offer(
@@ -485,16 +447,17 @@ class P2PMonitorManager:
                     result=OfferProcessResult.RATE_LIMITED,
                     reason="Local apply throttle active.",
                 )
-                chat_state.processed_offer_timestamps[offer.uuid] = applied_at
-                chat_state.applied_history = trim_history(
-                    [entry, *chat_state.applied_history]
+                monitor.processed_offer_timestamps[offer.uuid] = applied_at
+                monitor.applied_history = trim_history(
+                    [entry, *monitor.applied_history]
                 )
                 return entry
             self._recent_apply_attempts.append(asyncio.get_running_loop().time())
 
         LOGGER.info(
-            "Attempting to apply P2P offer chat_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s",
-            chat_id,
+            "Attempting to apply P2P offer user_id=%s monitor_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s",
+            user_id,
+            monitor.id,
             offer.uuid,
             offer.ratio,
             offer.amount,
@@ -532,8 +495,9 @@ class P2PMonitorManager:
             target_history = "applied"
 
         LOGGER.info(
-            "P2P apply result chat_id=%s uuid=%s status_code=%s result=%s reason=%s",
-            chat_id,
+            "P2P apply result user_id=%s monitor_id=%s uuid=%s status_code=%s result=%s reason=%s",
+            user_id,
+            monitor.id,
             offer.uuid,
             response.status_code,
             result.value,
@@ -548,23 +512,23 @@ class P2PMonitorManager:
             result=result,
             reason=reason,
         )
-        chat_state.processed_offer_timestamps[offer.uuid] = applied_at
-        chat_state.seen_offer_ids = [
+        monitor.processed_offer_timestamps[offer.uuid] = applied_at
+        monitor.seen_offer_ids = [
             offer.uuid,
-            *[item for item in chat_state.seen_offer_ids if item != offer.uuid],
+            *[item for item in monitor.seen_offer_ids if item != offer.uuid],
         ][:100]
         if target_history == "lost_race":
-            chat_state.lost_race_history = trim_history(
-                [entry, *chat_state.lost_race_history]
+            monitor.lost_race_history = trim_history(
+                [entry, *monitor.lost_race_history]
             )
         else:
-            chat_state.applied_history = trim_history(
-                [entry, *chat_state.applied_history]
-            )
+            monitor.applied_history = trim_history([entry, *monitor.applied_history])
         return entry
 
+    # -- QvaPay helpers ------------------------------------------------------
+
     async def _ensure_user_profile(
-        self, chat_id: int, auth_state: ChatAuthState
+        self, user_id: str, auth_state: ChatAuthState
     ) -> None:
         if auth_state.user_uuid:
             return
@@ -585,7 +549,7 @@ class P2PMonitorManager:
             auth_state.username = username.strip()
         auth_state.kyc = bool(response.body.get("kyc", False))
         auth_state.p2p_enabled = bool(response.body.get("p2p_enabled", False))
-        self._state_store.save_chat_state(chat_id, auth_state)
+        self._state_store.save_chat_state(user_id, auth_state)
 
     async def fetch_balance(self, auth_state: ChatAuthState) -> float | None:
         if not auth_state.has_bearer:
@@ -601,21 +565,23 @@ class P2PMonitorManager:
                 return float(balance)
         return None
 
-    def _build_list_arguments(self, chat_state: P2PMonitorChatState) -> dict[str, Any]:
+    def _build_list_arguments(self, monitor: P2PMonitorChatState) -> dict[str, Any]:
         arguments: dict[str, Any] = {
             "page": 1,
             "take": 100,
             "status": "open",
         }
-        if chat_state.target_type != P2POfferType.ANY:
-            arguments["type"] = chat_state.target_type.value
-        if chat_state.rules.coin:
-            arguments["coin"] = chat_state.rules.coin
+        if monitor.target_type != P2POfferType.ANY:
+            arguments["type"] = monitor.target_type.value
+        if monitor.rules.coin:
+            arguments["coin"] = monitor.rules.coin
         return arguments
+
+    # -- State bookkeeping ---------------------------------------------------
 
     def _remember_cycle_entries(
         self,
-        chat_state: P2PMonitorChatState,
+        monitor: P2PMonitorChatState,
         evaluations: list[OfferEvaluation],
         evaluated_at: str,
     ) -> None:
@@ -623,7 +589,7 @@ class P2PMonitorManager:
         discarded_entries = []
         for evaluation in evaluations[:MAX_HISTORY_ITEMS]:
             first_detected_at = self._remember_first_seen(
-                chat_state, evaluation.offer.uuid, evaluated_at
+                monitor, evaluation.offer.uuid, evaluated_at
             )
             entry = offer_history_from_offer(
                 evaluation.offer,
@@ -637,163 +603,82 @@ class P2PMonitorManager:
             else:
                 discarded_entries.append(entry)
 
-        chat_state.filtered_history = trim_history(
-            filtered_entries + chat_state.filtered_history
+        monitor.filtered_history = trim_history(
+            filtered_entries + monitor.filtered_history
         )
-        chat_state.discarded_history = trim_history(
-            discarded_entries + chat_state.discarded_history
+        monitor.discarded_history = trim_history(
+            discarded_entries + monitor.discarded_history
         )
-
-    def _log_cycle_evaluations(
-        self,
-        chat_id: int,
-        evaluations: list[OfferEvaluation],
-    ) -> None:
-        for evaluation in evaluations:
-            offer = evaluation.offer
-            LOGGER.info(
-                "P2P offer evaluated chat_id=%s uuid=%s type=%s coin=%s amount=%.2f receive=%.2f ratio=%.6f advertiser=%s eligible=%s reasons=%s",
-                chat_id,
-                offer.uuid,
-                offer.offer_type.value,
-                offer.coin,
-                offer.amount,
-                offer.receive,
-                offer.ratio,
-                offer.advertiser.username or offer.advertiser.uuid or "unknown",
-                evaluation.is_eligible,
-                ", ".join(evaluation.reasons) or "passed_all_filters",
-            )
 
     def _remember_first_seen(
         self,
-        chat_state: P2PMonitorChatState,
+        monitor: P2PMonitorChatState,
         offer_uuid: str,
         detected_at: str,
     ) -> str:
-        if offer_uuid not in chat_state.first_seen_at_by_offer:
-            chat_state.first_seen_at_by_offer[offer_uuid] = detected_at
-        return chat_state.first_seen_at_by_offer[offer_uuid]
+        if offer_uuid not in monitor.first_seen_at_by_offer:
+            monitor.first_seen_at_by_offer[offer_uuid] = detected_at
+        return monitor.first_seen_at_by_offer[offer_uuid]
 
     def _set_error(
         self,
-        chat_id: int,
-        chat_state: P2PMonitorChatState,
+        user_id: str,
+        monitor: P2PMonitorChatState,
         error_message: str,
     ) -> None:
-        LOGGER.error("P2P monitor error chat_id=%s message=%s", chat_id, error_message)
-        chat_state.last_error = error_message
-        chat_state.last_error_at = utcnow_iso()
-        self._repository.save_chat_state(chat_id, chat_state)
+        LOGGER.error(
+            "P2P monitor error user_id=%s monitor_id=%s message=%s",
+            user_id,
+            monitor.id,
+            error_message,
+        )
+        monitor.last_error = error_message
+        monitor.last_error_at = utcnow_iso()
+        self._repository.save_monitor(user_id, monitor)
 
-    async def _notify_error(self, bot: Bot, chat_id: int, error_message: str) -> None:
-        await self._send_text(bot, chat_id, error_message)
-        if self._settings.telegram_dev_chat_id is not None:
-            await self._send_text(
-                bot,
-                self._settings.telegram_dev_chat_id,
-                f"chat_id={chat_id}\n{error_message}",
-            )
-
-    def _resolve_notify_chat_id(self, chat_id: int, auth_state: ChatAuthState) -> int:
-        """Devuelve el Telegram chat ID personal del usuario autenticado."""
-        logged_in_as = auth_state.logged_in_as
-        if logged_in_as == "carlitos" and self._settings.carlitos_id is not None:
-            return self._settings.carlitos_id
+    def _should_notify_error(self, key: str, error_message: str) -> bool:
+        now = asyncio.get_running_loop().time()
+        entry_key = (key, error_message)
+        last_sent_at = self._last_error_notification_at.get(entry_key)
         if (
-            logged_in_as == "osliani"
-            and self._settings.telegram_dev_chat_id is not None
+            last_sent_at is not None
+            and now - last_sent_at < ERROR_NOTIFICATION_COOLDOWN_SECONDS
         ):
-            return self._settings.telegram_dev_chat_id
-        return chat_id
+            return False
 
-    async def _upsert_cycle_info_message(
+        self._last_error_notification_at[entry_key] = now
+        stale_before = now - (ERROR_NOTIFICATION_COOLDOWN_SECONDS * 3)
+        self._last_error_notification_at = {
+            item_key: item_sent_at
+            for item_key, item_sent_at in self._last_error_notification_at.items()
+            if item_sent_at >= stale_before
+        }
+        return True
+
+    # -- Notification --------------------------------------------------------
+
+    async def _emit(
         self,
-        bot: Bot,
-        chat_id: int,
-        chat_state: P2PMonitorChatState,
-        report: P2PMonitorCycleReport,
+        user_id: str,
+        monitor: P2PMonitorChatState,
+        event_type: str,
+        data: dict[str, Any],
     ) -> None:
-        previous_message_id = chat_state.last_cycle_info_message_id
-        if previous_message_id is not None:
-            await self._delete_message(bot, chat_id, previous_message_id)
-
-        text = self._build_cycle_info_text(report)
-        sent = await self._send_text(bot, chat_id, text)
-        chat_state.last_cycle_info_message_id = sent.message_id
-        self._repository.save_chat_state(chat_id, chat_state)
-
-    @staticmethod
-    def _build_cycle_info_text(report: P2PMonitorCycleReport) -> str:
-        if report.selected_offer is not None:
-            return (
-                "Monitor P2P: se encontro una oferta elegible.\n"
-                f"link: https://www.qvapay.com/p2p-pub/{report.selected_offer.uuid}"
-            )
-        if report.error_message:
-            return f"Monitor P2P: ciclo con error.\n{report.error_message}"
-        return "Monitor P2P: no se encontro una oferta elegible en este ciclo."
-
-    @staticmethod
-    async def _delete_message(bot: Bot, chat_id: int, message_id: int) -> None:
-        from telegram.error import BadRequest, Forbidden, TelegramError
-
+        payload = {"monitor_id": monitor.id, "monitor_name": monitor.name, **data}
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=message_id)
-        except BadRequest:
-            LOGGER.debug(
-                "Unable to delete previous cycle message chat_id=%s message_id=%s",
-                chat_id,
-                message_id,
+            await self._notifier.emit(
+                MonitorEvent(type=event_type, user_id=user_id, data=payload)
             )
-        except Forbidden:
-            LOGGER.warning(
-                "Missing permission to delete cycle message chat_id=%s message_id=%s",
-                chat_id,
-                message_id,
-            )
-        except TelegramError:
+        except Exception:  # noqa: BLE001
             LOGGER.exception(
-                "Telegram error deleting cycle message chat_id=%s message_id=%s",
-                chat_id,
-                message_id,
+                "Failed to emit monitor event user_id=%s monitor_id=%s type=%s",
+                user_id,
+                monitor.id,
+                event_type,
             )
 
-    @staticmethod
-    async def _send_text(
-        bot: Bot, chat_id: int, text: str, *, parse_mode: str | None = None
-    ) -> Message:
-        return await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
-
-    @staticmethod
-    async def _send_message_with_keyboard(
-        bot: Bot,
-        chat_id: int,
-        text: str,
-        keyboard_rows: list[list[dict[str, str]]],
-    ) -> None:
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-        inline_keyboard = [
-            [
-                InlineKeyboardButton(
-                    text=btn["text"], callback_data=btn["callback_data"]
-                )
-                for btn in row
-            ]
-            for row in keyboard_rows
-        ]
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard),
-            parse_mode="HTML",
-        )
-
-    def _build_backoff_seconds(self, chat_state: P2PMonitorChatState) -> float:
-        base_value = max(
-            chat_state.poll_interval_seconds, MIN_P2P_POLL_INTERVAL_SECONDS
-        )
+    def _build_backoff_seconds(self, monitor: P2PMonitorChatState) -> float:
+        base_value = max(monitor.poll_interval_seconds, MIN_P2P_POLL_INTERVAL_SECONDS)
         return float(base_value + random.uniform(1, 5))
 
     def _prune_apply_window(self) -> None:

@@ -1,109 +1,109 @@
-## QvaPay Telegram Bot
+## QvaPay P2P Monitor (Web App)
 
-Telegram bot that exposes one command for each QvaPay API endpoint documented in [docs](docs).
+Aplicación web multi-usuario que automatiza el monitoreo y la aplicación de ofertas P2P
+de QvaPay, con seguimiento en vivo. Sustituye al antiguo bot de Telegram.
 
-### Features
+- **Backend:** FastAPI (Python 3.13+) reutilizando el núcleo de dominio (`qvapay_bot/`).
+- **Frontend:** React + Vite + TypeScript (`frontend/`).
+- **Tiempo real:** eventos por ciclo vía Server-Sent Events (`/api/events`).
+- **Login:** el inicio de sesión de la web **es** el login de QvaPay (email/contraseña,
+  2FA opcional). El backend obtiene el bearer y emite una sesión propia (JWT en cookie
+  httpOnly). El `user_id` de la app = `uuid` de QvaPay; no se almacenan contraseñas.
 
-- Long polling bot implemented with the Python standard library only.
-- One Telegram command per documented QvaPay endpoint.
-- Per-chat authentication state for bearer token and app credentials.
-- Support for JSON payloads, query parameters, path parameters and P2P chat image upload.
+### Arquitectura
 
-### Requirements
+```
+qvapay_bot/      # Núcleo: cliente QvaPay, modelos, filtros/evaluación, monitor, persistencia JSON
+  p2p_monitor.py # Orquestador: tareas asyncio por usuario + notificaciones vía MonitorNotifier
+  notifier.py    # MonitorEvent + protocolo MonitorNotifier
+  events.py      # EventBus en memoria + WebNotifier (alimenta el SSE)
+  serialization.py  # dataclasses -> dicts JSON
+qvapay_web/      # Capa FastAPI: security (JWT), deps (DI + auth), routers, app (lifespan)
+frontend/        # SPA React (Login, Dashboard, Reglas, Historial)
+web_main.py      # Entry point
+```
 
-- Python 3.13 or newer.
-- A Telegram bot token stored in the `TELEGRAM_BOT_TOKEN` environment variable or in a local `.env` file.
+### Requisitos
 
-### Environment variables
+- Python 3.13+ y [uv](https://docs.astral.sh/uv/).
+- Node.js 18+ (para el frontend).
 
-- `TELEGRAM_BOT_TOKEN`: Telegram bot token.
-- `TELEGRAM_DEV_CHAT_ID`: Optional. Telegram chat id that receives developer error notifications.
-- `QVAPAY_BASE_URL`: Optional. Defaults to `https://api.qvapay.com`.
-- `BOT_STATE_FILE`: Optional. Defaults to `data/bot_state.json`.
-- `BOT_P2P_STATE_FILE`: Optional. Defaults to `data/p2p_monitor_state.json`.
-- `HTTP_TIMEOUT_SECONDS`: Optional. Defaults to `30`.
-- `TELEGRAM_POLL_TIMEOUT_SECONDS`: Optional. Defaults to `25`.
+### Variables de entorno
 
-### Run
+Obligatoria:
+
+- `JWT_SECRET`: clave para firmar las sesiones (usa ≥ 32 bytes).
+
+Opcionales (con valores por defecto):
+
+- `QVAPAY_BASE_URL` (`https://api.qvapay.com`)
+- `BOT_STATE_FILE` (`data/bot_state.json`) — credenciales/bearer por usuario.
+- `BOT_P2P_STATE_FILE` (`data/p2p_monitor_state.json`) — reglas, historial y estado del monitor.
+- `HTTP_TIMEOUT_SECONDS` (`30`)
+- `JWT_EXPIRE_MINUTES` (`10080` = 7 días)
+- `CORS_ORIGINS` (`http://localhost:5173,http://127.0.0.1:5173`)
+- `WEB_HOST` (`127.0.0.1`), `WEB_PORT` (`8000`)
+- `COOKIE_SECURE` (`false`) — ponlo en `true` detrás de HTTPS.
+- `WEB_RELOAD` (`false`) — recarga automática al usar `python web_main.py`.
+
+Ejemplo mínimo de `.env`:
+
+```
+JWT_SECRET=cambia-esto-por-una-clave-larga-y-aleatoria
+```
+
+### Desarrollo
+
+Backend (terminal 1):
 
 ```bash
-python main.py
+uv sync
+uv run uvicorn qvapay_web.app:app --reload
 ```
 
-### Authentication utilities
+Frontend (terminal 2):
 
-Use these helper commands before protected endpoints:
-
-- `/set_token token=...`
-- `/set_app app_id=... app_secret=...`
-- `/cancel`
-- `/clear_auth`
-- `/auth_status`
-
-The `/login` command also stores the returned bearer token automatically for the current chat.
-
-### P2P monitor commands
-
-These commands work in interactive mode and persist their state per chat:
-
-- `/p2p_monitor_on`
-- `/p2p_monitor_off`
-- `/p2p_monitor_status`
-- `/p2p_rules`
-- `/p2p_rules_show`
-- `/p2p_applied_list`
-- `/p2p_applied_detail`
-- `/p2p_monitor_test_once`
-
-The monitor uses a separate JSON state file and restores active monitoring after process restarts when the chat still has a bearer token configured.
-
-### Command format
-
-Commands use `key=value` pairs. Values with spaces must be quoted.
-
-If a command requires parameters and you do not send them inline, the bot asks for them one by one in the following messages. Send `/cancel` to abort the current action.
-
-Examples:
-
-```text
-/average
-/login email="user@example.com" password="secret" remember=true
-/check_session
-/list_p2p
-/mark_p2p_paid uuid=offer-uuid tx_id=REF-123
-/transaction_detail uuid=transaction-uuid
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
-For P2P chat images, send a photo with this caption:
+Abre el dev server de Vite (por defecto `http://localhost:5173`); las llamadas a `/api`
+se redirigen al backend en `:8000`.
 
-```text
-/send_p2p_chat uuid=offer-uuid message="Payment proof"
+### Producción (un solo proceso)
+
+Compila el frontend y arranca el backend, que sirve el SPA desde `frontend/dist`:
+
+```bash
+cd frontend && npm run build && cd ..
+uv run python web_main.py
 ```
 
-### Documented endpoint coverage
+### Flujo de uso
 
-Implemented commands:
+1. Inicia sesión con tus credenciales de QvaPay.
+2. Configura las reglas del monitor (tipo de oferta, moneda, ratios, montos, KYC/VIP,
+   intervalo) en **Reglas**.
+3. Enciende el monitor en el **Dashboard**. Cada ciclo lee las ofertas P2P, evalúa
+   contra tus reglas, aplica la mejor oferta elegible y emite eventos en vivo.
+4. Revisa las ofertas aplicadas y descartadas en **Historial**.
 
-- `/login`
-- `/check_session`
-- `/logout`
-- `/list_p2p`
-- `/p2p_detail`
-- `/apply_p2p`
-- `/cancel_p2p`
-- `/mark_p2p_paid`
-- `/rate_p2p`
-- `/get_p2p_chat`
-- `/send_p2p_chat`
-- `/average`
-- `/list_payment_links`
-- `/list_transactions`
-- `/transaction_detail`
-- `/profile`
+### Tests y linting
 
-### Notes
+```bash
+uv run pytest
+uv run ruff check qvapay_bot qvapay_web tests
+```
 
-- The file [docs/crear 2FA.md](docs/crear%202FA.md) currently duplicates the session endpoints already documented in [docs/sesiones.md](docs/sesiones.md). No separate 2FA creation endpoint was documented there, so no dedicated command was added for it.
-- The bot stores chat credentials in a local JSON file to make repeated calls easier during development.
-- The P2P monitor stores rules, histories and worker state in a separate JSON file so authentication and monitoring concerns remain isolated.
-- Applied-offer listings currently do not include web links because the QvaPay documentation in [docs/listar p2p.md](docs/listar%20p2p.md) and [docs/detalles p2p.md](docs/detalles%20p2p.md) does not confirm a stable frontend route for a P2P offer UUID.
+### Notas
+
+- El estado se guarda en archivos JSON (sin base de datos). El `bot_state.json` anterior
+  estaba indexado por `chat_id` de Telegram; con el nuevo esquema (clave = `uuid` de
+  QvaPay) esos registros se ignoran y se repueblan al primer login. Respalda `data/`
+  antes de migrar.
+- Los bearer tokens de QvaPay se guardan server-side en `bot_state.json` en texto plano
+  (igual que antes). Protege ese archivo y define `JWT_SECRET`.
+- El monitor corre como tareas asyncio dentro del proceso FastAPI; al reiniciar, el
+  `lifespan` reanuda los monitores de los usuarios con estado `enabled`.

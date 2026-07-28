@@ -5,17 +5,18 @@ from pathlib import Path
 from qvapay_bot.p2p_models import OfferHistoryEntry, OfferProcessResult, P2POfferType
 from qvapay_bot.p2p_repository import P2PMonitorStateStore
 
+USER = "user-1"
 
-# uv run pytest -s tests/test_p2p_repository.py
+
 def test_repository_persists_monitor_state(tmp_path: Path) -> None:
     repository = P2PMonitorStateStore(tmp_path / "p2p_state.json")
 
-    state = repository.get_chat_state(100)
-    state.enabled = True
-    state.poll_interval_seconds = 45
-    state.target_type = P2POfferType.SELL
-    state.rules.coin = "BANK_CUP"
-    state.applied_history.append(
+    monitor = repository.create_monitor(USER, "Principal")
+    monitor.enabled = True
+    monitor.poll_interval_seconds = 45
+    monitor.target_type = P2POfferType.SELL
+    monitor.rules.coin = "BANK_CUP"
+    monitor.applied_history.append(
         OfferHistoryEntry(
             uuid="offer-1",
             status="processing",
@@ -32,11 +33,13 @@ def test_repository_persists_monitor_state(tmp_path: Path) -> None:
             reason="Offer applied successfully.",
         )
     )
-    repository.save_chat_state(100, state)
+    repository.save_monitor(USER, monitor)
 
     reloaded = P2PMonitorStateStore(tmp_path / "p2p_state.json")
-    restored = reloaded.get_chat_state(100)
+    restored = reloaded.get_monitor(USER, monitor.id)
 
+    assert restored is not None
+    assert restored.name == "Principal"
     assert restored.enabled is True
     assert restored.poll_interval_seconds == 45
     assert restored.target_type == P2POfferType.SELL
@@ -45,10 +48,9 @@ def test_repository_persists_monitor_state(tmp_path: Path) -> None:
     assert restored.applied_history[0].result == OfferProcessResult.APPLIED
 
 
-# uv run pytest -s tests/test_p2p_repository.py
 def test_repository_can_find_processed_offer(tmp_path: Path) -> None:
     repository = P2PMonitorStateStore(tmp_path / "p2p_state.json")
-    state = repository.get_chat_state(1)
+    monitor = repository.create_monitor(USER, "Principal")
     entry = OfferHistoryEntry(
         uuid="offer-2",
         status="open",
@@ -63,23 +65,30 @@ def test_repository_can_find_processed_offer(tmp_path: Path) -> None:
         result=OfferProcessResult.LOST_RACE,
         reason="Offer was taken by another peer first.",
     )
-    state.lost_race_history.append(entry)
-    repository.save_chat_state(1, state)
+    monitor.lost_race_history.append(entry)
+    repository.save_monitor(USER, monitor)
 
-    found = repository.find_history_entry(1, "offer-2")
+    found = repository.find_history_entry(USER, monitor.id, "offer-2")
 
     assert found is not None
     assert found.result == OfferProcessResult.LOST_RACE
 
 
-# uv run pytest -s tests/test_p2p_repository.py
-def test_repository_persists_last_cycle_info_message_id(tmp_path: Path) -> None:
-    repository = P2PMonitorStateStore(tmp_path / "p2p_state.json")
-    state = repository.get_chat_state(77)
-    state.last_cycle_info_message_id = 12345
-    repository.save_chat_state(77, state)
+def test_repository_migrates_v1_state(tmp_path: Path) -> None:
+    # Estado v1: {"version":1, "chats": {user_id: {...monitor...}}}
+    v1 = (
+        '{"version": 1, "chats": {"' + USER + '": '
+        '{"enabled": true, "poll_interval_seconds": 30, "target_type": "buy", '
+        '"rules": {"coin": "MLC"}}}}'
+    )
+    path = tmp_path / "p2p_state.json"
+    path.write_text(v1, encoding="utf-8")
 
-    reloaded = P2PMonitorStateStore(tmp_path / "p2p_state.json")
-    restored = reloaded.get_chat_state(77)
-
-    assert restored.last_cycle_info_message_id == 12345
+    repository = P2PMonitorStateStore(path)
+    monitors = repository.list_monitors(USER)
+    assert len(monitors) == 1
+    assert monitors[0].name == "Principal"
+    assert monitors[0].enabled is True
+    assert monitors[0].target_type == P2POfferType.BUY
+    assert monitors[0].rules.coin == "MLC"
+    assert monitors[0].id  # se generó un id

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/layout.tsx","./src/components/monitorrulecard.tsx","./src/lib/api.ts","./src/lib/auth.tsx","./src/lib/types.ts","./src/lib/useeventstream.ts","./src/pages/dashboard.tsx","./src/pages/history.tsx","./src/pages/login.tsx","./src/pages/rules.tsx"],"version":"5.9.3"}
