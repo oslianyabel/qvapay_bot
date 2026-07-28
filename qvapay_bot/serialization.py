@@ -130,6 +130,8 @@ def monitor_state_to_dict(
         "enabled": state.enabled,
         "poll_interval_seconds": state.poll_interval_seconds,
         "target_type": state.target_type.value,
+        "selection_strategy": state.selection_strategy.value,
+        "apply_mode": state.apply_mode.value,
         "rules": rules_to_dict(state.rules),
         "last_error": state.last_error,
         "last_error_at": state.last_error_at,

@@ -9,11 +9,13 @@ from qvapay_bot.p2p_models import (
     DEFAULT_P2P_POLL_INTERVAL_SECONDS,
     MAX_HISTORY_ITEMS,
     MAX_SEEN_OFFERS,
+    ApplyMode,
     OfferHistoryEntry,
     OfferProcessResult,
     P2PMonitorChatState,
     P2PMonitorRules,
     P2POfferType,
+    SelectionStrategy,
 )
 
 
@@ -162,6 +164,20 @@ def _monitor_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
     except ValueError:
         target_type = P2POfferType.ANY
 
+    try:
+        selection_strategy = SelectionStrategy(
+            str(raw_state.get("selection_strategy", SelectionStrategy.BEST_RATIO.value))
+        )
+    except ValueError:
+        selection_strategy = SelectionStrategy.BEST_RATIO
+
+    try:
+        apply_mode = ApplyMode(
+            str(raw_state.get("apply_mode", ApplyMode.SINGLE.value))
+        )
+    except ValueError:
+        apply_mode = ApplyMode.SINGLE
+
     return P2PMonitorChatState(
         id=_coerce_optional_str(raw_state.get("id")) or "",
         name=_coerce_optional_str(raw_state.get("name")) or "",
@@ -171,6 +187,8 @@ def _monitor_from_dict(raw_state: dict[str, Any]) -> P2PMonitorChatState:
             DEFAULT_P2P_POLL_INTERVAL_SECONDS,
         ),
         target_type=target_type,
+        selection_strategy=selection_strategy,
+        apply_mode=apply_mode,
         rules=P2PMonitorRules(
             coin=_coerce_optional_str(rules_raw.get("coin")),
             min_ratio=_coerce_optional_float(rules_raw.get("min_ratio")),
@@ -207,6 +225,8 @@ def _monitor_to_dict(state: P2PMonitorChatState) -> dict[str, Any]:
         "enabled": state.enabled,
         "poll_interval_seconds": state.poll_interval_seconds,
         "target_type": state.target_type.value,
+        "selection_strategy": state.selection_strategy.value,
+        "apply_mode": state.apply_mode.value,
         "rules": {
             "coin": state.rules.coin,
             "min_ratio": state.rules.min_ratio,

@@ -1,6 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { api, ApiError, type RulesPayload } from "../lib/api";
-import type { CoinsMap, MonitorState, OfferType } from "../lib/types";
+import type {
+  ApplyMode,
+  CoinsMap,
+  MonitorState,
+  OfferType,
+  SelectionStrategy,
+} from "../lib/types";
 
 function numOrNull(v: string): number | null {
   if (v.trim() === "") return null;
@@ -19,6 +25,8 @@ export default function MonitorRuleCard({ monitor, coins, onSaved, onDeleted }: 
   const [name, setName] = useState(monitor.name);
   const [form, setForm] = useState<RulesPayload>({
     target_type: monitor.target_type,
+    selection_strategy: monitor.selection_strategy,
+    apply_mode: monitor.apply_mode,
     poll_interval_seconds: monitor.poll_interval_seconds,
     coin: monitor.rules.coin,
     min_ratio: monitor.rules.min_ratio,
@@ -225,6 +233,47 @@ export default function MonitorRuleCard({ monitor, coins, onSaved, onDeleted }: 
           />
           Solo VIP
         </label>
+      </div>
+
+      <div className="policy">
+        <div className="policy-head">Política de aplicación</div>
+        <div className="pair-grid">
+          <label>
+            Prioridad de selección
+            <select
+              value={form.selection_strategy}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  selection_strategy: e.target.value as SelectionStrategy,
+                })
+              }
+            >
+              <option value="best_ratio">Mejor ratio</option>
+              <option value="amount_high">Mayor monto</option>
+              <option value="amount_low">Menor monto</option>
+              <option value="oldest">Más antigua</option>
+              <option value="newest">Más reciente</option>
+            </select>
+          </label>
+          <label>
+            Aplicaciones por ciclo
+            <select
+              value={form.apply_mode}
+              onChange={(e) =>
+                setForm({ ...form, apply_mode: e.target.value as ApplyMode })
+              }
+            >
+              <option value="single">Una (la mejor)</option>
+              <option value="multiple">Varias (hasta agotar saldo)</option>
+            </select>
+          </label>
+        </div>
+        <p className="muted small" style={{ margin: "0.4rem 0 0" }}>
+          {form.apply_mode === "multiple"
+            ? "Aplica varias ofertas por ciclo en orden de prioridad, hasta agotar el saldo (compra) o el límite de ritmo."
+            : "Aplica solo la mejor oferta según la prioridad elegida en cada ciclo."}
+        </p>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}

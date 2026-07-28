@@ -1,4 +1,5 @@
 import type {
+  ApplyMode,
   CoinsMap,
   CycleReport,
   History,
@@ -7,6 +8,7 @@ import type {
   OfferEvaluation,
   OfferType,
   Profile,
+  SelectionStrategy,
 } from "./types";
 
 export class ApiError extends Error {
@@ -46,6 +48,8 @@ export interface LoginPayload {
 export interface RulesPayload {
   name?: string;
   target_type: OfferType;
+  selection_strategy: SelectionStrategy;
+  apply_mode: ApplyMode;
   poll_interval_seconds: number;
   coin: string | null;
   min_ratio: number | null;

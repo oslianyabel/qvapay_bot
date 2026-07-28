@@ -87,6 +87,8 @@ async def update_rules(
     if payload.name is not None and payload.name.strip():
         monitor.name = payload.name.strip()
     monitor.target_type = payload.target_type
+    monitor.selection_strategy = payload.selection_strategy
+    monitor.apply_mode = payload.apply_mode
     monitor.poll_interval_seconds = payload.poll_interval_seconds
     coin = payload.coin.strip().upper() if payload.coin else None
     monitor.rules = P2PMonitorRules(

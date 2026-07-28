@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 
 from qvapay_bot.p2p_models import (
     MIN_P2P_POLL_INTERVAL_SECONDS,
+    ApplyMode,
     P2POfferType,
+    SelectionStrategy,
 )
 
 
@@ -23,6 +25,8 @@ class MonitorCreateRequest(BaseModel):
 class RulesUpdateRequest(BaseModel):
     name: str | None = Field(default=None, max_length=60)
     target_type: P2POfferType = P2POfferType.ANY
+    selection_strategy: SelectionStrategy = SelectionStrategy.BEST_RATIO
+    apply_mode: ApplyMode = ApplyMode.SINGLE
     poll_interval_seconds: int = Field(
         default=MIN_P2P_POLL_INTERVAL_SECONDS, ge=MIN_P2P_POLL_INTERVAL_SECONDS
     )

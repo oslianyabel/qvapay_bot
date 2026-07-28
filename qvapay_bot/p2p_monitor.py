@@ -16,6 +16,7 @@ from qvapay_bot.p2p_filters import (
 from qvapay_bot.p2p_models import (
     MAX_HISTORY_ITEMS,
     MIN_P2P_POLL_INTERVAL_SECONDS,
+    ApplyMode,
     OfferEvaluation,
     OfferHistoryEntry,
     OfferProcessResult,
@@ -307,38 +308,42 @@ class P2PMonitorManager:
         evaluated_at = utcnow_iso()
         self._remember_cycle_entries(monitor, evaluations, evaluated_at)
 
-        sorted_candidates = sort_eligible_offers(evaluations, monitor.rules)
+        sorted_candidates = sort_eligible_offers(
+            evaluations, monitor.rules, monitor.selection_strategy
+        )
 
+        balance: float | None = None
         if monitor.target_type == P2POfferType.BUY and sorted_candidates:
             balance = await self.fetch_balance(auth_state)
-            if balance is not None:
-                if balance < 1:
-                    LOGGER.info(
-                        "Balance too low to buy user_id=%s monitor_id=%s balance=%.2f, stopping monitor",
-                        user_id,
-                        monitor_id,
-                        balance,
-                    )
-                    monitor.enabled = False
-                    self._repository.save_monitor(user_id, monitor)
-                    await self._emit(
-                        user_id, monitor, EventType.BALANCE_LOW, {"balance": balance}
-                    )
-                    await self._emit(
-                        user_id,
-                        monitor,
-                        EventType.MONITOR_STOPPED,
-                        {"reason": "balance_low", "balance": balance},
-                    )
-                    report.error_message = "Balance too low."
-                    return report
-                sorted_candidates = [
-                    o for o in sorted_candidates if o.amount <= balance
-                ]
+            if balance is not None and balance < 1:
+                LOGGER.info(
+                    "Balance too low to buy user_id=%s monitor_id=%s balance=%.2f, stopping monitor",
+                    user_id,
+                    monitor_id,
+                    balance,
+                )
+                monitor.enabled = False
+                self._repository.save_monitor(user_id, monitor)
+                await self._emit(
+                    user_id, monitor, EventType.BALANCE_LOW, {"balance": balance}
+                )
+                await self._emit(
+                    user_id,
+                    monitor,
+                    EventType.MONITOR_STOPPED,
+                    {"reason": "balance_low", "balance": balance},
+                )
+                report.error_message = "Balance too low."
+                return report
 
-        if not sorted_candidates:
+        # Candidatos que además puedes pagar este ciclo (solo compra).
+        affordable = sorted_candidates
+        if monitor.target_type == P2POfferType.BUY and balance is not None:
+            affordable = [o for o in sorted_candidates if o.amount <= balance]
+
+        if not affordable:
             LOGGER.info(
-                "No eligible P2P offers found user_id=%s monitor_id=%s",
+                "No eligible/affordable P2P offers user_id=%s monitor_id=%s",
                 user_id,
                 monitor_id,
             )
@@ -348,16 +353,18 @@ class P2PMonitorManager:
             self._repository.save_monitor(user_id, monitor)
             return report
 
-        selected_offer = sorted_candidates[0]
+        selected_offer = affordable[0]
         report.selected_offer = selected_offer
         LOGGER.info(
-            "Selected P2P offer user_id=%s monitor_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s",
+            "Selected P2P offer user_id=%s monitor_id=%s uuid=%s ratio=%.6f amount=%.2f coin=%s strategy=%s mode=%s",
             user_id,
             monitor_id,
             selected_offer.uuid,
             selected_offer.ratio,
             selected_offer.amount,
             selected_offer.coin,
+            monitor.selection_strategy.value,
+            monitor.apply_mode.value,
         )
         await self._emit(
             user_id,
@@ -387,31 +394,38 @@ class P2PMonitorManager:
             self._repository.save_monitor(user_id, monitor)
             return report
 
-        final_entry = await self._attempt_apply(
-            user_id,
-            monitor,
-            auth_state,
-            selected_offer,
-            evaluated_at,
-            first_detected_at,
-        )
-        report.final_entry = final_entry
+        if monitor.apply_mode == ApplyMode.MULTIPLE:
+            entries = await self._apply_multiple(
+                user_id, monitor, auth_state, sorted_candidates, balance, evaluated_at
+            )
+            report.final_entry = entries[0] if entries else None
+            any_applied = any(
+                e.result == OfferProcessResult.APPLIED for e in entries
+            )
+        else:
+            final_entry = await self._attempt_apply(
+                user_id,
+                monitor,
+                auth_state,
+                selected_offer,
+                evaluated_at,
+                first_detected_at,
+            )
+            report.final_entry = final_entry
+            await self._emit(
+                user_id,
+                monitor,
+                EventType.APPLY_RESULT,
+                {"entry": history_entry_to_dict(final_entry)},
+            )
+            any_applied = final_entry.result == OfferProcessResult.APPLIED
+
         monitor.last_error = None
         monitor.last_error_at = None
         monitor.last_success_at = evaluated_at
         self._repository.save_monitor(user_id, monitor)
 
-        await self._emit(
-            user_id,
-            monitor,
-            EventType.APPLY_RESULT,
-            {"entry": history_entry_to_dict(final_entry)},
-        )
-
-        if (
-            monitor.target_type == P2POfferType.BUY
-            and final_entry.result == OfferProcessResult.APPLIED
-        ):
+        if monitor.target_type == P2POfferType.BUY and any_applied:
             post_balance = await self.fetch_balance(auth_state)
             if post_balance is not None and post_balance < 1:
                 monitor.enabled = False
@@ -427,6 +441,52 @@ class P2PMonitorManager:
                 )
 
         return report
+
+    async def _apply_multiple(
+        self,
+        user_id: str,
+        monitor: P2PMonitorChatState,
+        auth_state: ChatAuthState,
+        candidates: list[P2POfferSnapshot],
+        balance: float | None,
+        evaluated_at: str,
+    ) -> list[OfferHistoryEntry]:
+        """Aplica varias ofertas en orden de prioridad, respetando el saldo (compra)
+        y el límite de ritmo de aplicaciones del proceso."""
+        entries: list[OfferHistoryEntry] = []
+        is_buy = monitor.target_type == P2POfferType.BUY
+        remaining = balance
+        for offer in candidates:
+            if not self._has_apply_capacity():
+                break
+            if is_buy and remaining is not None and offer.amount > remaining:
+                continue
+            first_detected_at = self._remember_first_seen(
+                monitor, offer.uuid, evaluated_at
+            )
+            entry = await self._attempt_apply(
+                user_id, monitor, auth_state, offer, evaluated_at, first_detected_at
+            )
+            entries.append(entry)
+            await self._emit(
+                user_id,
+                monitor,
+                EventType.APPLY_RESULT,
+                {"entry": history_entry_to_dict(entry)},
+            )
+            if (
+                is_buy
+                and remaining is not None
+                and entry.result == OfferProcessResult.APPLIED
+            ):
+                remaining -= offer.amount
+                if remaining < 1:
+                    break
+        return entries
+
+    def _has_apply_capacity(self) -> bool:
+        self._prune_apply_window()
+        return len(self._recent_apply_attempts) < 2
 
     async def _attempt_apply(
         self,

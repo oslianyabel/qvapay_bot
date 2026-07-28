@@ -652,6 +652,20 @@ input::placeholder {
   flex: 1;
 }
 
+.policy {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 0.95rem;
+  background: var(--surface-2);
+}
+.policy-head {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--primary);
+  margin-bottom: 0.6rem;
+}
+
 /* ---- Panel de ratio promedio (ticker) ---- */
 .ratio-panel {
   grid-column: 1 / -1;

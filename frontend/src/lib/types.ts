@@ -1,5 +1,14 @@
 export type OfferType = "buy" | "sell" | "any";
 
+export type SelectionStrategy =
+  | "best_ratio"
+  | "amount_high"
+  | "amount_low"
+  | "oldest"
+  | "newest";
+
+export type ApplyMode = "single" | "multiple";
+
 export interface Profile {
   uuid: string;
   username: string | null;
@@ -26,6 +35,8 @@ export interface MonitorState {
   running: boolean;
   poll_interval_seconds: number;
   target_type: OfferType;
+  selection_strategy: SelectionStrategy;
+  apply_mode: ApplyMode;
   rules: Rules;
   last_error: string | null;
   last_error_at: string | null;

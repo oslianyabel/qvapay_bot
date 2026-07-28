@@ -7,9 +7,11 @@ from typing import Any
 from qvapay_bot.http_client import HttpResponse
 from qvapay_bot.notifier import EventType, MonitorEvent
 from qvapay_bot.p2p_models import (
+    ApplyMode,
     OfferProcessResult,
     P2PMonitorRules,
     P2POfferType,
+    SelectionStrategy,
 )
 from qvapay_bot.p2p_monitor import P2PMonitorManager
 from qvapay_bot.p2p_repository import P2PMonitorStateStore
@@ -73,13 +75,19 @@ class FakeQvaPayClient:
         raise AssertionError(f"unexpected command {command}")
 
 
-def _offer(uuid: str, *, offer_type: str = "sell") -> dict[str, Any]:
+def _offer(
+    uuid: str,
+    *,
+    offer_type: str = "sell",
+    amount: float = 10.0,
+    receive: float = 4000.0,
+) -> dict[str, Any]:
     return {
         "uuid": uuid,
         "type": offer_type,
         "coin": "BANK_CUP",
-        "amount": 10.0,
-        "receive": 4000.0,
+        "amount": amount,
+        "receive": receive,
         "status": "open",
         "only_kyc": False,
         "only_vip": False,
@@ -180,6 +188,48 @@ def test_buy_stops_when_balance_low(tmp_path: Path) -> None:
     assert EventType.MONITOR_STOPPED in notifier.types()
     reloaded = repository.get_monitor(USER_ID, monitor.id)
     assert reloaded is not None and reloaded.enabled is False
+
+
+def test_selection_strategy_amount_high(tmp_path: Path) -> None:
+    # Oferta grande con ratio bajo vs oferta pequeña con ratio alto.
+    offers = [
+        _offer("small-high-ratio", amount=10.0, receive=4000.0),  # ratio 400
+        _offer("big-low-ratio", amount=90.0, receive=27000.0),  # ratio 300
+    ]
+    client = FakeQvaPayClient(offers=offers)
+    notifier = FakeNotifier()
+    state_store, repository, manager = _build(tmp_path, client, notifier)
+
+    auth = ChatAuthState(bearer_token="tok", user_uuid=USER_ID)
+    state_store.save_chat_state(USER_ID, auth)
+    monitor = _make_monitor(repository, target_type=P2POfferType.SELL)
+    monitor.selection_strategy = SelectionStrategy.AMOUNT_HIGH
+    repository.save_monitor(USER_ID, monitor)
+
+    report = asyncio.run(manager.run_cycle_once(USER_ID, monitor.id, auth, force=True))
+    assert report.selected_offer is not None
+    assert report.selected_offer.uuid == "big-low-ratio"
+
+
+def test_multiple_apply_mode_applies_several(tmp_path: Path) -> None:
+    offers = [_offer("a"), _offer("b")]
+    client = FakeQvaPayClient(offers=offers)
+    notifier = FakeNotifier()
+    state_store, repository, manager = _build(tmp_path, client, notifier)
+
+    auth = ChatAuthState(bearer_token="tok", user_uuid=USER_ID)
+    state_store.save_chat_state(USER_ID, auth)
+    monitor = _make_monitor(repository, target_type=P2POfferType.SELL)
+    monitor.apply_mode = ApplyMode.MULTIPLE
+    repository.save_monitor(USER_ID, monitor)
+
+    asyncio.run(manager.run_cycle_once(USER_ID, monitor.id, auth, force=True))
+    # En modo múltiple se aplican ambas (dentro del límite de ritmo de 2/ciclo).
+    assert set(client.applied_uuids) == {"a", "b"}
+    apply_events = [
+        e for e in notifier.events if e.type == "apply_result"
+    ]
+    assert len(apply_events) == 2
 
 
 def test_multiple_monitors_are_independent(tmp_path: Path) -> None:

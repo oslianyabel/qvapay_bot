@@ -10,6 +10,7 @@ from qvapay_bot.p2p_models import (
     P2PMonitorRules,
     P2POfferSnapshot,
     P2POfferType,
+    SelectionStrategy,
     normalize_bool,
     parse_iso_datetime,
 )
@@ -107,18 +108,28 @@ def evaluate_offer(
 def sort_eligible_offers(
     evaluations: list[OfferEvaluation],
     rules: P2PMonitorRules,
+    strategy: SelectionStrategy = SelectionStrategy.BEST_RATIO,
 ) -> list[P2POfferSnapshot]:
     eligible_offers = [
         evaluation.offer for evaluation in evaluations if evaluation.is_eligible
     ]
-    return sorted(
-        eligible_offers,
-        key=lambda offer: (
-            -offer.ratio,
-            _amount_distance(offer.amount, rules),
-            _created_at_sort_value(offer.created_at),
-        ),
-    )
+    return sorted(eligible_offers, key=_sort_key_for(strategy, rules))
+
+
+def _sort_key_for(strategy: SelectionStrategy, rules: P2PMonitorRules):
+    """Devuelve la función clave de ordenación (menor = mayor prioridad)."""
+    created = _created_at_sort_value
+
+    if strategy == SelectionStrategy.AMOUNT_HIGH:
+        return lambda o: (-o.amount, -o.ratio, created(o.created_at))
+    if strategy == SelectionStrategy.AMOUNT_LOW:
+        return lambda o: (o.amount, -o.ratio, created(o.created_at))
+    if strategy == SelectionStrategy.OLDEST:
+        return lambda o: (created(o.created_at), -o.ratio)
+    if strategy == SelectionStrategy.NEWEST:
+        return lambda o: (-created(o.created_at), -o.ratio)
+    # BEST_RATIO (por defecto): mejor ratio, luego cercanía al centro del rango, luego antigüedad
+    return lambda o: (-o.ratio, _amount_distance(o.amount, rules), created(o.created_at))
 
 
 def summarize_discarded_reasons(

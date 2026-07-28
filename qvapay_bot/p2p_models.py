@@ -27,6 +27,23 @@ class OfferProcessResult(StrEnum):
     ERROR = "error"
 
 
+class SelectionStrategy(StrEnum):
+    """Criterio para ordenar/priorizar las ofertas elegibles."""
+
+    BEST_RATIO = "best_ratio"
+    AMOUNT_HIGH = "amount_high"
+    AMOUNT_LOW = "amount_low"
+    OLDEST = "oldest"
+    NEWEST = "newest"
+
+
+class ApplyMode(StrEnum):
+    """Cuántas ofertas aplicar por ciclo."""
+
+    SINGLE = "single"  # solo la mejor
+    MULTIPLE = "multiple"  # varias hasta agotar saldo / límite de ritmo
+
+
 @dataclass(slots=True, frozen=True)
 class P2PAdvertiser:
     uuid: str | None
@@ -93,6 +110,8 @@ class P2PMonitorChatState:
     enabled: bool = False
     poll_interval_seconds: int = DEFAULT_P2P_POLL_INTERVAL_SECONDS
     target_type: P2POfferType = P2POfferType.ANY
+    selection_strategy: SelectionStrategy = SelectionStrategy.BEST_RATIO
+    apply_mode: ApplyMode = ApplyMode.SINGLE
     rules: P2PMonitorRules = field(default_factory=P2PMonitorRules)
     seen_offer_ids: list[str] = field(default_factory=list)
     first_seen_at_by_offer: dict[str, str] = field(default_factory=dict)
