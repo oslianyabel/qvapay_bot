@@ -7,7 +7,10 @@ export default function Layout() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">QvaPay P2P</div>
+        <div className="brand">
+          <span className="pulse" aria-hidden="true" />
+          QvaPay P2P
+        </div>
         <nav className="nav">
           <NavLink to="/" end>
             Dashboard

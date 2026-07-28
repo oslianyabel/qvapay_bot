@@ -32,7 +32,10 @@ export default function Login() {
   return (
     <div className="center">
       <form className="card login" onSubmit={onSubmit}>
-        <h1>QvaPay P2P Monitor</h1>
+        <h1>
+          <span className="pulse" aria-hidden="true" />
+          QvaPay P2P Monitor
+        </h1>
         <p className="muted">Inicia sesión con tu cuenta de QvaPay.</p>
 
         <label>

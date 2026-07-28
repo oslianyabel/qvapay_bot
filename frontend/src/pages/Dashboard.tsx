@@ -43,25 +43,30 @@ function MonitorCard({
   busy: boolean;
 }) {
   return (
-    <div className="card monitor-card">
+    <div className={`card monitor-card ${monitor.enabled ? "is-live" : ""}`}>
       <div className="monitor-card-head">
         <div>
           <div className="monitor-name">{monitor.name}</div>
-          <div className="muted small">
-            {monitor.target_type} · {monitor.rules.coin ?? "cualquier moneda"} ·{" "}
-            {monitor.poll_interval_seconds}s
+          <div className="monitor-meta">
+            <span className="chip">{monitor.target_type}</span>
+            <span className="chip coin">{monitor.rules.coin ?? "cualquiera"}</span>
+            <span className="chip">{monitor.poll_interval_seconds}s</span>
           </div>
         </div>
         <span className={`badge ${monitor.enabled ? "on" : "off"}`}>
-          {monitor.enabled ? "ACTIVO" : "DETENIDO"}
+          {monitor.enabled ? "ACTIVO" : "PAUSADO"}
         </span>
       </div>
 
       <div className="monitor-stats">
-        <span>aplicadas: {monitor.applied_count}</span>
+        <span>
+          aplicadas <span className="n">{monitor.applied_count}</span>
+        </span>
         {lastCycle && (
           <span className="muted">
-            último: {lastCycle.read_count ?? "?"} leídas / {lastCycle.filtered_count ?? "?"} elegibles
+            último ciclo: <span className="n">{lastCycle.read_count ?? "?"}</span>{" "}
+            leídas / <span className="n">{lastCycle.filtered_count ?? "?"}</span>{" "}
+            elegibles
           </span>
         )}
       </div>
@@ -72,11 +77,11 @@ function MonitorCard({
 
       <div className="monitor-card-actions">
         <button
-          className={`btn ${monitor.enabled ? "btn-danger" : "btn-primary"}`}
+          className={`btn ${monitor.enabled ? "btn-danger" : "btn-start"}`}
           onClick={() => onToggle(monitor)}
           disabled={busy}
         >
-          {monitor.enabled ? "Pausar" : "Iniciar"}
+          {busy ? "…" : monitor.enabled ? "Pausar" : "Iniciar"}
         </button>
         <button
           className="btn btn-ghost"
@@ -155,7 +160,7 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <div className="cards">
-        <div className="card stat">
+        <div className="card stat accent">
           <div className="stat-label">Saldo</div>
           <div className="stat-value">{fmt(balance)} QUSD</div>
         </div>
@@ -203,10 +208,12 @@ export default function Dashboard() {
           {events.map((e, i) => (
             <div className={`event event-${e.type}`} key={`${e.at}-${i}`}>
               <span className="event-time">{e.at.slice(11, 19)}</span>
-              <span className="event-monitor">
-                {String((e.data as any).monitor_name ?? "")}
-              </span>
-              <span className="event-type">{e.type}</span>
+              <div className="event-meta">
+                <span className="event-monitor">
+                  {String((e.data as any).monitor_name ?? "")}
+                </span>
+                <span className="event-type">{e.type}</span>
+              </div>
               <span className="event-summary">{describeEvent(e)}</span>
             </div>
           ))}

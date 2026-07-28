@@ -126,19 +126,36 @@ export default function MonitorRuleCard({ monitor, coins, onSaved, onDeleted }: 
           </select>
         </label>
 
-        <label>
-          Ratio promedio actual
-          <input
-            type="text"
-            readOnly
-            className="readonly"
-            value={
-              selected
-                ? `${selected.average?.toFixed(4) ?? "—"}  (compra ${selected.average_buy?.toFixed(4) ?? "—"} / venta ${selected.average_sell?.toFixed(4) ?? "—"})`
-                : "—"
-            }
-          />
-        </label>
+        <div className="ratio-panel">
+          <div className="ratio-panel-head">
+            Ratio promedio actual
+            {form.coin ? <> · <span className="coin">{form.coin}</span></> : ""}
+          </div>
+          {selected ? (
+            <div className="ratio-stats">
+              <div className="ratio-stat primary">
+                <span className="rp-label">Promedio</span>
+                <span className="rp-value">{selected.average?.toFixed(4) ?? "—"}</span>
+              </div>
+              <div className="ratio-stat">
+                <span className="rp-label">Compra</span>
+                <span className="rp-value">
+                  {selected.average_buy?.toFixed(4) ?? "—"}
+                </span>
+              </div>
+              <div className="ratio-stat">
+                <span className="rp-label">Venta</span>
+                <span className="rp-value">
+                  {selected.average_sell?.toFixed(4) ?? "—"}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="ratio-empty">
+              Selecciona una moneda para ver su ratio de cambio promedio.
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="pair-grid">
