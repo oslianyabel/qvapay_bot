@@ -3,9 +3,21 @@ from __future__ import annotations
 from qvapay_bot.p2p_filters import (
     build_offer_snapshot,
     evaluate_offer,
+    extract_offer_list,
     sort_eligible_offers,
 )
 from qvapay_bot.p2p_models import P2PMonitorRules, P2POfferType
+
+
+def test_extract_offer_list_variants() -> None:
+    assert extract_offer_list([{"a": 1}]) == [{"a": 1}]
+    assert extract_offer_list({"data": [1, 2]}) == [1, 2]
+    assert extract_offer_list({"offers": [3]}) == [3]
+    assert extract_offer_list({"data": {"data": [4]}}) == [4]
+    assert extract_offer_list('[{"x": 1}]') == [{"x": 1}]
+    assert extract_offer_list({"message": "error"}) is None
+    assert extract_offer_list("no-json") is None
+    assert extract_offer_list(None) is None
 
 
 # uv run pytest -s tests/test_p2p_filters.py

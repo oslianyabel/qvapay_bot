@@ -10,6 +10,7 @@ from qvapay_bot.notifier import EventType, MonitorEvent, MonitorNotifier
 from qvapay_bot.p2p_filters import (
     build_offer_snapshot,
     evaluate_offer,
+    extract_offer_list,
     sort_eligible_offers,
     summarize_discarded_reasons,
 )
@@ -258,10 +259,8 @@ class P2PMonitorManager:
             self._set_error(user_id, monitor, report.error_message)
             return report
 
-        offers_raw = None
-        if isinstance(response.body, dict):
-            offers_raw = response.body.get("data") or response.body.get("offers")
-        if not isinstance(offers_raw, list):
+        offers_raw = extract_offer_list(response.body)
+        if offers_raw is None:
             LOGGER.error(
                 "Invalid /p2p payload user_id=%s monitor_id=%s status_code=%s body=%r",
                 user_id,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from typing import Any
 
@@ -15,6 +16,27 @@ from qvapay_bot.p2p_models import (
     parse_iso_datetime,
 )
 from qvapay_bot.qvapay_client import LIST_P2P_COIN_ALIASES
+
+
+def extract_offer_list(body: Any) -> list[Any] | None:
+    """Extrae la lista de ofertas de la respuesta de /p2p tolerando variantes:
+    array directo, `{"data": [...]}`, `{"offers": [...]}`, paginación anidada
+    (`{"data": {"data": [...]}}`) o el cuerpo como string JSON."""
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        for key in ("data", "offers", "results"):
+            value = body.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict) and isinstance(value.get("data"), list):
+                return value["data"]
+    return None
 
 
 def build_offer_snapshot(raw_offer: Any) -> P2POfferSnapshot | None:

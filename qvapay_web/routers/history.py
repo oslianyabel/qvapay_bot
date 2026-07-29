@@ -6,7 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
-from qvapay_bot.p2p_filters import build_offer_snapshot, evaluate_offer
+from qvapay_bot.p2p_filters import (
+    build_offer_snapshot,
+    evaluate_offer,
+    extract_offer_list,
+)
 from qvapay_bot.qvapay_client import COMMAND_INDEX
 from qvapay_bot.serialization import evaluation_to_dict, history_entry_to_dict
 from qvapay_web.deps import (
@@ -77,10 +81,8 @@ async def get_offers(
     response = await qvapay_client.execute(
         COMMAND_INDEX["list_p2p"], arguments, user.auth_state
     )
-    offers_raw = None
-    if isinstance(response.body, dict):
-        offers_raw = response.body.get("data") or response.body.get("offers")
-    if not isinstance(offers_raw, list):
+    offers_raw = extract_offer_list(response.body)
+    if offers_raw is None:
         return {"offers": [], "error": f"HTTP {response.status_code}"}
 
     offers = [
