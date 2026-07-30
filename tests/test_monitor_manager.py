@@ -183,11 +183,32 @@ def test_buy_stops_when_balance_low(tmp_path: Path) -> None:
         manager.run_cycle_once(USER_ID, monitor.id, auth, force=True)
     )
 
-    assert report.error_message == "Balance too low."
+    assert report.error_message is not None
+    assert "Saldo insuficiente" in report.error_message
     assert client.applied_uuids == []
     assert EventType.MONITOR_STOPPED in notifier.types()
     reloaded = repository.get_monitor(USER_ID, monitor.id)
     assert reloaded is not None and reloaded.enabled is False
+
+
+def test_dry_run_does_not_disable_monitor_on_low_balance(tmp_path: Path) -> None:
+    """Una prueba de ciclo no debe tener efectos secundarios."""
+    client = FakeQvaPayClient(offers=[_offer("offer-4", offer_type="buy")], balance=0.0)
+    notifier = FakeNotifier()
+    state_store, repository, manager = _build(tmp_path, client, notifier)
+
+    auth = ChatAuthState(bearer_token="tok", user_uuid=USER_ID)
+    state_store.save_chat_state(USER_ID, auth)
+    monitor = _make_monitor(repository, target_type=P2POfferType.BUY)
+
+    asyncio.run(
+        manager.run_cycle_once(USER_ID, monitor.id, auth, force=True, dry_run=True)
+    )
+
+    reloaded = repository.get_monitor(USER_ID, monitor.id)
+    assert reloaded is not None and reloaded.enabled is True
+    assert EventType.MONITOR_STOPPED not in notifier.types()
+    assert client.applied_uuids == []
 
 
 def test_selection_strategy_amount_high(tmp_path: Path) -> None:

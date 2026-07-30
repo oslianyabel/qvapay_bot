@@ -304,6 +304,8 @@ class P2PMonitorManager:
             ", ".join(report.top_discarded_reasons) or "none",
         )
 
+        self._log_cycle_evaluations(user_id, monitor_id, evaluations)
+
         evaluated_at = utcnow_iso()
         self._remember_cycle_entries(monitor, evaluations, evaluated_at)
 
@@ -316,23 +318,28 @@ class P2PMonitorManager:
             balance = await self.fetch_balance(auth_state)
             if balance is not None and balance < 1:
                 LOGGER.info(
-                    "Balance too low to buy user_id=%s monitor_id=%s balance=%.2f, stopping monitor",
+                    "Balance too low to buy user_id=%s monitor_id=%s balance=%.2f dry_run=%s",
                     user_id,
                     monitor_id,
                     balance,
+                    dry_run,
                 )
-                monitor.enabled = False
-                self._repository.save_monitor(user_id, monitor)
-                await self._emit(
-                    user_id, monitor, EventType.BALANCE_LOW, {"balance": balance}
+                report.error_message = (
+                    f"Saldo insuficiente ({balance:.2f} QUSD) para aplicar."
                 )
-                await self._emit(
-                    user_id,
-                    monitor,
-                    EventType.MONITOR_STOPPED,
-                    {"reason": "balance_low", "balance": balance},
-                )
-                report.error_message = "Balance too low."
+                # Una prueba (dry-run) no debe tener efectos: no apaga el monitor.
+                if not dry_run:
+                    monitor.enabled = False
+                    self._repository.save_monitor(user_id, monitor)
+                    await self._emit(
+                        user_id, monitor, EventType.BALANCE_LOW, {"balance": balance}
+                    )
+                    await self._emit(
+                        user_id,
+                        monitor,
+                        EventType.MONITOR_STOPPED,
+                        {"reason": "balance_low", "balance": balance},
+                    )
                 return report
 
         # Candidatos que además puedes pagar este ciclo (solo compra).
@@ -638,8 +645,9 @@ class P2PMonitorManager:
         }
         if monitor.target_type != P2POfferType.ANY:
             arguments["type"] = monitor.target_type.value
-        if monitor.rules.coin:
-            arguments["coin"] = monitor.rules.coin
+        # La moneda NO se envía a la API: QvaPay usa códigos distintos según el
+        # endpoint (p. ej. CUP vs BANK_CUP) y filtrar en el servidor puede devolver
+        # cero ofertas. El filtro local (`evaluate_offer`) ya resuelve los alias.
         return arguments
 
     # -- State bookkeeping ---------------------------------------------------
@@ -674,6 +682,29 @@ class P2PMonitorManager:
         monitor.discarded_history = trim_history(
             discarded_entries + monitor.discarded_history
         )
+
+    def _log_cycle_evaluations(
+        self,
+        user_id: str,
+        monitor_id: str,
+        evaluations: list[OfferEvaluation],
+    ) -> None:
+        for evaluation in evaluations:
+            offer = evaluation.offer
+            LOGGER.info(
+                "P2P offer evaluated user_id=%s monitor_id=%s uuid=%s type=%s coin=%s amount=%.2f receive=%.2f ratio=%.6f advertiser=%s eligible=%s reasons=%s",
+                user_id,
+                monitor_id,
+                offer.uuid,
+                offer.offer_type.value,
+                offer.coin,
+                offer.amount,
+                offer.receive,
+                offer.ratio,
+                offer.advertiser.username or offer.advertiser.uuid or "unknown",
+                evaluation.is_eligible,
+                ", ".join(evaluation.reasons) or "passed_all_filters",
+            )
 
     def _remember_first_seen(
         self,

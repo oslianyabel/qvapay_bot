@@ -42,6 +42,7 @@ export default function MonitorRuleCard({ monitor, coins, onSaved, onDeleted }: 
 
   const coinKeys = Object.keys(coins).sort();
   const selected = form.coin ? coins[form.coin] : undefined;
+  const coinLabel = form.coin ?? "la moneda";
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -88,7 +89,7 @@ export default function MonitorRuleCard({ monitor, coins, onSaved, onDeleted }: 
 
       <div className="form-grid">
         <label>
-          Tipo de oferta
+          Qué quieres hacer
           <select
             value={form.target_type}
             onChange={(e) =>
@@ -96,8 +97,8 @@ export default function MonitorRuleCard({ monitor, coins, onSaved, onDeleted }: 
             }
           >
             <option value="any">Cualquiera</option>
-            <option value="buy">Compra (buy)</option>
-            <option value="sell">Venta (sell)</option>
+            <option value="sell">Comprar QUSD (pagas {coinLabel})</option>
+            <option value="buy">Vender QUSD (recibes {coinLabel})</option>
           </select>
         </label>
 

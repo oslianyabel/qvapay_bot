@@ -666,6 +666,59 @@ input::placeholder {
   margin-bottom: 0.6rem;
 }
 
+/* Informe de prueba de ciclo */
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.report-counts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+}
+.rc {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.7rem;
+}
+.rc-label {
+  font-size: 0.7rem;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.rc-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+.rc-value.ok {
+  color: var(--buy);
+}
+.report-subhead {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.reasons {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 /* ---- Panel de ratio promedio (ticker) ---- */
 .ratio-panel {
   grid-column: 1 / -1;

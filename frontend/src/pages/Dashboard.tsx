@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useEventStream } from "../lib/useEventStream";
-import type { MonitorEvent, MonitorState } from "../lib/types";
+import Modal from "../components/Modal";
+import type { CycleReport, MonitorEvent, MonitorState } from "../lib/types";
 
 function fmt(n: number | null | undefined, digits = 2): string {
   return typeof n === "number" ? n.toFixed(digits) : "—";
@@ -99,6 +100,9 @@ export default function Dashboard() {
   const [monitors, setMonitors] = useState<MonitorState[] | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [report, setReport] = useState<{ name: string; data: CycleReport } | null>(
+    null,
+  );
   const { events, connected } = useEventStream(true);
 
   const load = useCallback(async () => {
@@ -146,7 +150,8 @@ export default function Dashboard() {
   const test = async (m: MonitorState) => {
     setBusyId(m.id);
     try {
-      await api.testCycle(m.id);
+      const data = await api.testCycle(m.id);
+      setReport({ name: m.name, data });
       await load();
     } finally {
       setBusyId(null);
@@ -219,6 +224,64 @@ export default function Dashboard() {
           ))}
         </div>
       </section>
+
+      {report && (
+        <Modal
+          title={`Prueba de ciclo — ${report.name}`}
+          onClose={() => setReport(null)}
+        >
+          <div className="report">
+            <div className="report-counts">
+              <div className="rc">
+                <span className="rc-label">Leídas</span>
+                <span className="rc-value">{report.data.read_count}</span>
+              </div>
+              <div className="rc">
+                <span className="rc-label">Elegibles</span>
+                <span className="rc-value ok">{report.data.filtered_count}</span>
+              </div>
+              <div className="rc">
+                <span className="rc-label">Descartadas</span>
+                <span className="rc-value">{report.data.discarded_count}</span>
+              </div>
+            </div>
+
+            {report.data.error_message && (
+              <div className="alert alert-error">{report.data.error_message}</div>
+            )}
+
+            {report.data.selected_offer ? (
+              <div className="alert alert-ok">
+                Oferta que se aplicaría: <strong>{report.data.selected_offer.coin}</strong>{" "}
+                · {report.data.selected_offer.amount} QUSD · ratio{" "}
+                {report.data.selected_offer.ratio.toFixed(4)}{" "}
+                <a href={report.data.selected_offer.link} target="_blank" rel="noreferrer">
+                  ver oferta
+                </a>
+              </div>
+            ) : (
+              <p className="muted small" style={{ margin: 0 }}>
+                Ninguna oferta cumple las reglas en este momento.
+              </p>
+            )}
+
+            {report.data.top_discarded_reasons.length > 0 && (
+              <div>
+                <div className="report-subhead">Motivos de descarte</div>
+                <ul className="reasons">
+                  {report.data.top_discarded_reasons.map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className="muted small" style={{ margin: 0 }}>
+              Es una simulación: no se aplicó ninguna oferta.
+            </p>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
